@@ -288,7 +288,7 @@ export class Game {
       case 'pass':
         if (this.phase !== 'playing' || this.turnId !== id) throw new Error('还没轮到你出牌。');
         if (!this.currentPlay) throw new Error('你是本轮领出者，必须出牌。');
-        this.passCount++; this.log(`${player.name} 不出。`);
+        this.passCount++; this.lastActorId = id; this.log(`${player.name} 不出。`);
         if (this.passCount >= 2) this.beginSkills(this.currentPlay.playerId);
         else { this.turnId = this.next(id); this.timed('playing'); }
         break;

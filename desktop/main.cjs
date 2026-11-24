@@ -8,7 +8,9 @@ if (!app.requestSingleInstanceLock()) app.quit();
 app.on('second-instance', () => { windowRef?.show(); windowRef?.focus(); });
 function toggle() { if (!windowRef) return; if (windowRef.isVisible()) windowRef.hide(); else { windowRef.show(); windowRef.focus(); } }
 app.whenReady().then(async () => {
-  localService = await createGameServer({ port: 0, host: '0.0.0.0', staticDir: path.join(__dirname, '../dist') });
+  const serviceOptions = { port: 4318, host: '0.0.0.0', staticDir: path.join(__dirname, '../dist') };
+  try { localService = await createGameServer(serviceOptions); }
+  catch (error) { if (error.code !== 'EADDRINUSE') throw error; localService = await createGameServer({ ...serviceOptions, port: 0 }); }
   const bounds = screen.getPrimaryDisplay().workArea;
   windowRef = new BrowserWindow({ ...bounds, frame: false, transparent: true, backgroundColor: '#00000000', resizable: false, hasShadow: false, alwaysOnTop: true, show: false, title: '玻璃斗地主', icon: path.join(__dirname, 'icon.png'), webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true } });
   windowRef.setAlwaysOnTop(true, 'floating');
@@ -32,7 +34,7 @@ app.whenReady().then(async () => {
   await windowRef.loadURL(appUrl);
   windowRef.show();
   globalShortcut.register('CommandOrControl+Shift+H', toggle);
-  globalShortcut.register('CommandOrControl+Shift+0', () => { windowRef.setBounds(screen.getPrimaryDisplay().workArea); windowRef.show(); });
+  globalShortcut.register('CommandOrControl+Shift+0', () => { windowRef.setBounds(screen.getPrimaryDisplay().workArea); windowRef.webContents.send('reset-layout'); windowRef.show(); });
   const trayIcon = nativeImage.createFromPath(path.join(__dirname, 'icon.png')).resize({ width: 20, height: 20 });
   tray = new Tray(trayIcon);
   tray.setToolTip('玻璃斗地主 · Ctrl+Shift+H 显示 / 隐藏');

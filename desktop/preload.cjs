@@ -9,11 +9,14 @@ contextBridge.exposeInMainWorld('desktop', {
   close: () => ipcRenderer.send('window-control', 'close'),
 });
 let ignored = false;
-addEventListener('mousemove', event => {
+function updatePassthrough(event) {
   const element = document.elementFromPoint(event.clientX, event.clientY);
-  const interactive = !!element?.closest('.interactive,button,input,select,a');
+  const interactive = event.buttons !== 0 || !!element?.closest('.interactive,button,input,select,a');
   if (ignored === !interactive) return;
   ignored = !interactive;
   ipcRenderer.send('window-control', 'passthrough', ignored);
-});
+}
+addEventListener('mousemove', updatePassthrough);
+addEventListener('mouseup', updatePassthrough);
 addEventListener('beforeunload', () => ipcRenderer.send('window-control', 'passthrough', false));
+ipcRenderer.on('reset-layout', () => window.dispatchEvent(new Event('glass-reset-layout')));

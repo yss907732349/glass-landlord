@@ -13,6 +13,8 @@ services:
         value: production
       - key: HOST
         value: 0.0.0.0
+      - key: TRUST_PROXY
+        value: '1'
       - key: ELECTRON_SKIP_BINARY_DOWNLOAD
         value: '1'
       - key: ALLOWED_ORIGINS
