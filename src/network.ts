@@ -22,6 +22,7 @@ export class RoomConnection {
   }
   private connect(endpoint: string, request: ClientMessage) {
     const generation = ++this.generation;
+    let accepted = false;
     this.callbacks.status(request.type === 'resume' ? '连接中断，正在恢复座位…' : '正在连接；免费服务首次唤醒可能需要一分钟…', true);
     const socket = new WebSocket(endpoint); this.socket = socket;
     const timeout = setTimeout(() => { if (generation !== this.generation) return; socket.close(); if (!this.session) this.callbacks.status('连接超时，请检查服务地址后重试。', false); }, 75000);
@@ -34,11 +35,11 @@ export class RoomConnection {
       if (generation !== this.generation) return;
       let message: ServerMessage; try { message = JSON.parse(event.data); } catch { return; }
       if (message.type === 'joined') {
-        clearTimeout(timeout); this.reconnectUntil = 0;
+        clearTimeout(timeout); this.reconnectUntil = 0; accepted = true;
         this.session = { code: message.code, token: message.token, playerId: message.playerId, endpoint };
         sessionStore().setItem('glass-room', JSON.stringify(this.session)); this.callbacks.joined(this.session); this.callbacks.status('已连接', false);
       } else if (message.type === 'state') this.callbacks.state(message.state);
-      else if (message.type === 'error') { clearTimeout(timeout); if (request.type === 'resume' && !this.session?.playerId) this.forget(); this.callbacks.status(message.message, false); }
+      else if (message.type === 'error') { clearTimeout(timeout); if (request.type === 'resume' && !accepted) this.forget(); this.callbacks.status(message.message, false); }
       else if (message.type === 'closed') { this.forget(); this.callbacks.status(message.message, false); }
     };
     socket.onclose = () => {
