@@ -6,7 +6,7 @@ import './effects.css';
 
 type Point = { x: number; y: number };
 type Effect = { event: GameEvent; selfId: string; players: PlayerView[]; direction: 1 | -1; expires: number };
-const CENTER: Point = { x: 590, y: 235 };
+const CENTER: Point = { x: 540, y: 210 };
 const LIFETIME = 1800;
 const MAX_EFFECTS = 5;
 const css = (values: Record<string, string | number>): CSSProperties => values as CSSProperties;
@@ -15,12 +15,12 @@ const place = (point: Point): CSSProperties => ({ left: point.x, top: point.y })
 function playerPoint(effect: Effect, id: string | undefined, area: 'hand' | 'skill' = 'hand'): Point {
   const self = effect.players.findIndex(player => player.id === effect.selfId);
   const index = effect.players.findIndex(player => player.id === id);
-  if (index < 0 || index === self) return area === 'skill' ? { x: 590, y: 590 } : { x: 590, y: 465 };
+  if (index < 0 || index === self) return area === 'skill' ? { x: 540, y: 515 } : { x: 540, y: 410 };
   const right = index === (self + 1) % 3;
-  return { x: right ? 1045 : 135, y: area === 'skill' ? 150 : 185 };
+  return { x: right ? 940 : 140, y: area === 'skill' ? 125 : 155 };
 }
 
-/** Glass backs only: flights never contain card rank/suit or hidden hand data. */
+/** Neutral backs only: flights never contain card rank/suit or hidden hand data. */
 function Flight({ from, to, index = 0, delay = 0, duration = .88, gold = false, skill = false, returnPath = false }: {
   from: Point; to: Point; index?: number; delay?: number; duration?: number; gold?: boolean; skill?: boolean; returnPath?: boolean;
 }) {
@@ -106,13 +106,13 @@ function EventVisual({ effect }: { effect: Effect }) {
   const actorName = effect.players.find(player => player.id === event.actorId)?.name ?? '朋友';
   const skillName = SKILLS.find(skill => skill.kind === event.skillKind)?.name ?? '技能';
   const targetName = effect.players.find(player => player.id === event.targetId)?.name;
-  const announcementPoint = { x: actor.x, y: event.actorId === effect.selfId ? 365 : 285 };
+  const announcementPoint = { x: actor.x, y: event.actorId === effect.selfId ? 325 : 245 };
   return <div className={`skill-fx fx-event-${event.type} ${event.skillKind ? `fx-kind-${event.skillKind}` : ''}`} data-event-id={event.id} data-kind={event.skillKind ?? event.type}>
     {event.type === 'skill' && <><div className="fx-announcement" style={place(announcementPoint)} role="status"><span className="fx-announcement-symbol">{event.skillKind === 'reverse' ? '↶' : event.skillKind === 'identity' ? '♛' : '✧'}</span><div><strong>{actorName} · {skillName}</strong><small>{targetName ? `对 ${targetName} 使用` : event.skillKind === 'shuffle' ? '全桌手牌重新分配' : event.skillKind === 'reverse' ? '接牌顺序已经改变' : '技能已生效'}</small></div></div><SkillVisual effect={effect}/></>}
     {event.type === 'drawSkills' && <><Flights from={CENTER} to={skillPoint} count={event.count ?? 1} skill delay={.05}/><FloatCount point={skillPoint} text={`技能 ＋${event.count ?? 1}`} gain delay={.55}/></>}
     {event.type === 'discardSkills' && <><div className="fx-discard-drift" style={place(skillPoint)} aria-hidden="true">{Array.from({ length: Math.min(event.count ?? 1, 5) }, (_, index) => <i key={index} style={css({ '--discard-i': index })}>✧</i>)}</div><FloatCount point={skillPoint} text={`弃技能 ${event.count ?? 1}`} delay={.15}/></>}
     {event.type === 'play' && <Flights from={actor} to={CENTER} count={Math.min(event.count ?? 1, 4)} delay={0} duration={.52}/>}
-    {event.type === 'pass' && <span className="fx-pass" style={place({ x: actor.x, y: event.actorId === effect.selfId ? 365 : 285 })}>不出</span>}
+    {event.type === 'pass' && <span className="fx-pass" style={place({ x: actor.x, y: event.actorId === effect.selfId ? 325 : 245 })}>不出</span>}
   </div>;
 }
 

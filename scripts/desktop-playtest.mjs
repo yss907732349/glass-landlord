@@ -1,58 +1,49 @@
 import { _electron as electron } from '@playwright/test';
-import { mkdir, writeFile } from 'node:fs/promises';
+import assert from 'node:assert/strict';
+import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { execFileSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-
-const project = fileURLToPath(new URL('../', import.meta.url));
-const output = path.join(project, 'artifacts');
-await mkdir(output, { recursive: true });
-const env = { ...process.env };
-delete env.ELECTRON_RUN_AS_NODE;
-let app;
-const report = { checks: [], errors: [], stderr: [] };
-try {
-  app = await electron.launch({ executablePath: path.join(project, 'release/win-unpacked/玻璃斗地主.exe'), cwd: project, env, timeout: 25000 });
-  app.process().stderr?.on('data', chunk => report.stderr.push(chunk.toString()));
-  const page = await app.firstWindow({ timeout: 25000 });
-  await page.evaluate(() => { localStorage.setItem("glass-server", location.origin); localStorage.removeItem("glass-room"); });
-  await page.reload();
-  page.on('pageerror', error => report.errors.push(error.message));
-  await page.getByRole('heading', { name: '朋友，入座。' }).waitFor({ timeout: 20000 });
-  report.window = await page.evaluate(() => ({ title: document.title, background: getComputedStyle(document.body).backgroundColor, desktop: !!window.desktop, url: location.href, body: document.body.innerText.slice(0, 180) }));
-  report.native = await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().map(window => ({ background: window.getBackgroundColor(), alwaysOnTop: window.isAlwaysOnTop(), bounds: window.getBounds(), url: window.webContents.getURL() })));
-  report.checks.push('packaged app loaded from its embedded room service');
-  await page.evaluate(() => {
-    const NativeSocket = window.WebSocket;
-    window.WebSocket = class extends NativeSocket {
-      constructor(...args) {
-        super(...args);
-        this.addEventListener('message', event => {
-          try { const message = JSON.parse(event.data); if (message.type === 'state') window.__packagedView = message.state; } catch {}
-        });
-      }
-    };
-  });
-  await page.locator('input[name=nickname]').fill('打包验收');
-  await page.locator('input[name=password]').fill('packaged-test');
-  await page.getByRole('button', { name: '开一桌', exact: true }).click();
-  await page.waitForFunction(() => window.__packagedView?.phase === 'lobby');
-  report.checks.push('room created with a password over packaged WebSocket server');
-  await page.getByRole('button', { name: '添加两位陪练，先玩一局' }).click();
-  await page.waitForFunction(() => window.__packagedView?.players.length === 3);
-  await page.getByRole('button', { name: '我准备好了', exact: true }).click();
-  await page.waitForFunction(() => window.__packagedView?.players.every(player => player.ready));
-  await page.getByRole('button', { name: '开始这局', exact: true }).click();
-  await page.waitForFunction(() => window.__packagedView?.phase === 'bidding');
-  report.checks.push('bots joined, all three ready, and a real game started');
-  report.game = await page.evaluate(() => ({ phase: window.__packagedView.phase, players: window.__packagedView.players.map(player => ({ name: player.name, ready: player.ready, connected: player.connected, cards: player.cardCount })), ownCards: window.__packagedView.hand.length }));
-  await page.screenshot({ path: path.join(output, 'desktop-packaged.png'), omitBackground: true });
-  report.checks.push('transparent packaged window screenshot captured');
-  console.log(JSON.stringify(report, null, 2));
-} catch (error) {
-  report.errors.push(error instanceof Error ? error.stack : String(error));
-  console.error(JSON.stringify(report, null, 2));
-  process.exitCode = 1;
-} finally {
-  await writeFile(path.join(output, 'desktop-packaged-report.json'), JSON.stringify(report, null, 2));
-  await app?.close().catch(() => {});
-}
+const project=fileURLToPath(new URL('../',import.meta.url)), output=path.join(project,'artifacts'); await mkdir(output,{recursive:true});
+const profile=await mkdtemp(path.join(output,'desktop-local-profile-')); const expectedVersion=JSON.parse(await readFile(path.join(project,'package.json'),'utf8')).version;
+const env={...process.env}; delete env.ELECTRON_RUN_AS_NODE;
+const report={checks:[],errors:[],stderr:[],profile}; let app,page,created=false;
+const state=()=>page.evaluate(()=>window.__packagedView);
+async function actionClick(locator){const previous=(await state()).version;await locator.click();await page.waitForFunction(version=>window.__packagedView.version>version,previous);}
+async function capture(name){const png=await app.evaluate(async({BrowserWindow})=>(await BrowserWindow.getAllWindows()[0].webContents.capturePage()).toPNG().toString('base64'));await writeFile(path.join(output,name),Buffer.from(png,'base64'));}
+async function setTransparency(value){await page.getByRole('button',{name:'设置',exact:true}).click();await page.getByRole('slider',{name:'整体透明度',exact:true}).evaluate((element,next)=>{Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(element,String(next));element.dispatchEvent(new Event('input',{bubbles:true}));element.dispatchEvent(new Event('change',{bubbles:true}));},value);await page.waitForFunction(expected=>Math.abs(Number(getComputedStyle(document.querySelector('.table-shell')).opacity)-expected)<.001,1-value/100);await page.getByRole('button',{name:'完成',exact:true}).click();}
+try{
+ app=await electron.launch({executablePath:path.join(project,'release/win-unpacked/玻璃斗地主.exe'),args:[`--user-data-dir=${profile}`],cwd:project,env,timeout:30000});app.process().stderr?.on('data',chunk=>report.stderr.push(chunk.toString()));
+ report.app=await app.evaluate(({app})=>({version:app.getVersion(),userData:app.getPath('userData')}));assert.equal(report.app.version,expectedVersion);assert.equal(path.resolve(report.app.userData).toLowerCase(),profile.toLowerCase());
+ page=await app.firstWindow();page.setDefaultTimeout(30000);page.on('pageerror',error=>report.errors.push(error.message));
+ await page.evaluate(()=>{localStorage.setItem('glass-server',location.origin);localStorage.removeItem('glass-room');});await page.reload();await page.getByRole('heading',{name:'朋友，入座。'}).waitFor();
+ await page.addInitScript(()=>{const NativeSocket=window.WebSocket;window.WebSocket=class extends NativeSocket{constructor(...args){super(...args);window.__localTestSocket=this;this.addEventListener('message',event=>{try{const message=JSON.parse(event.data);if(message.type==='state')window.__packagedView=message.state;if(message.type==='closed')window.__localClosed=true;}catch{}});}};});await page.reload();await page.getByRole('heading',{name:'朋友，入座。'}).waitFor();
+ report.native=await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows().map(window=>({background:window.getBackgroundColor(),alwaysOnTop:window.isAlwaysOnTop(),bounds:window.getBounds(),url:window.webContents.getURL()})));
+ report.checks.push('isolated packaged app loaded its embedded service with transparent pinned window');
+ await page.locator('input[name=nickname]').fill('打包验收');await page.locator('input[name=password]').fill('packaged-test');await page.getByRole('button',{name:'开一桌',exact:true}).click();await page.waitForFunction(()=>window.__packagedView?.phase==='lobby');created=true;
+ await actionClick(page.getByRole('button',{name:'添加两位陪练，先玩一局',exact:true}));await actionClick(page.getByRole('button',{name:'我准备好了',exact:true}));await page.waitForFunction(()=>window.__packagedView.players.every(p=>p.ready));await actionClick(page.getByRole('button',{name:'开始这局',exact:true}));
+ const biddingUntil=Date.now()+25000;while(Date.now()<biddingUntil){const s=await state();if(s.phase==='playing')break;if(s.phase==='bidding'&&s.turnId===s.selfId)await actionClick(page.getByRole('button',{name:'3 分',exact:true}));await page.waitForTimeout(150);}await page.waitForFunction(()=>window.__packagedView?.phase==='playing');
+ assert.ok(await page.locator('.own-hand .playing-card').evaluateAll(cards=>cards.length>=17&&cards.every(card=>card.querySelectorAll('.card-corner').length===1&&card.querySelectorAll('.card-suit,.opposite').length===0)));
+ assert.equal(await page.locator('.opponent .card-back').count(),0);
+ report.style=await page.evaluate(()=>({body:getComputedStyle(document.body).backgroundColor,opacity:Number(getComputedStyle(document.querySelector('.table-shell')).opacity),cardBackground:getComputedStyle(document.querySelector('.playing-card')).backgroundColor,oldSymbols:document.querySelectorAll('.card-suit,.opposite').length,violations:[...document.querySelectorAll('.table-shell,.table-shell *')].filter(element=>{const style=getComputedStyle(element);return style.backgroundImage!=='none'||style.filter!=='none'||style.backdropFilter!=='none'||style.textShadow!=='none';}).map(element=>element.className)}));
+ assert.equal(report.style.body,'rgba(0, 0, 0, 0)');assert.equal(report.style.opacity,.88);assert.equal(report.style.oldSymbols,0);assert.deepEqual(report.style.violations,[]);assert.ok(report.style.cardBackground.match(/\d+/g).slice(0,3).every(channel=>Number(channel)<90));
+ report.checks.push('real cards have single corner, dark graphite faces, transparent body and no gradients, blur or text shadow');
+ await setTransparency(40);const originalId=(await state()).selfId;report.opacityCoverage=await page.evaluate(()=>['.playing-card','.card-corner b','.window-tools button','.player-heading strong'].map(selector=>{const element=document.querySelector(selector);let opacity=1,ancestor=element;while(ancestor){opacity*=Number(getComputedStyle(ancestor).opacity);ancestor=ancestor.parentElement;}return{selector,contained:document.querySelector('.table-shell').contains(element),effectiveOpacity:opacity};}));for(const item of report.opacityCoverage){assert.ok(item.contained);assert.ok(item.effectiveOpacity<=.601);}await capture('desktop-packaged-transparency-40.png');await page.reload();await page.waitForFunction(id=>window.__packagedView?.selfId===id&&!window.__packagedView.paused,originalId);assert.equal(await page.locator('.table-shell').evaluate(element=>Number(getComputedStyle(element).opacity)),.6);assert.equal(await page.evaluate(()=>localStorage.getItem('glass-ui-opacity')),'60');assert.equal(await page.locator('.skill-fx').count(),0);await setTransparency(12);report.checks.push('whole-interface transparency covers cards, ranks, text and controls, persists across refresh and restores original seat without replayed effects');
+ for(const [label,dx,dy]of[['右下角拖动缩放',-45,-25],['左上角拖动缩放',35,20]]){const box=await page.getByRole('button',{name:label,exact:true}).boundingBox(),before=await page.locator('.zoom-label').textContent();await page.mouse.move(box.x+box.width/2,box.y+box.height/2);await page.mouse.down();await page.mouse.move(box.x+box.width/2+dx,box.y+box.height/2+dy,{steps:6});await page.mouse.up();assert.notEqual(await page.locator('.zoom-label').textContent(),before);await page.locator('.zoom-label').click();}
+ report.checks.push('both packaged corner handles resize and reset');
+ const first=await page.locator('.own-hand .playing-card').nth(0).boundingBox(),third=await page.locator('.own-hand .playing-card').nth(2).boundingBox();await page.mouse.move(first.x+5,first.y+45);await page.mouse.down();await page.mouse.move(third.x+5,third.y+45,{steps:8});await page.mouse.up();assert.equal(await page.locator('.own-hand .selected').count(),3);await page.mouse.move(first.x+5,first.y+45);await page.mouse.down();await page.mouse.move(third.x+5,third.y+45,{steps:8});await page.mouse.up();assert.equal(await page.locator('.own-hand .selected').count(),0);report.checks.push('packaged card drag sweep selects and deselects');
+ await capture('desktop-packaged-transparent.png');
+ let used=false,played=false;const until=Date.now()+90000;
+ while(Date.now()<until){const s=await state();assert.notEqual(s.phase,'skill_use');if(s.phase==='finished')break;
+  if(s.phase==='skill_discard'&&s.mustDiscard){for(let i=0;i<s.mustDiscard;i++)await page.locator('.skill-card').nth(i).click();await actionClick(page.getByRole('button',{name:'弃掉选中技能',exact:true}));continue;}
+  if(s.phase==='playing'&&s.turnId===s.selfId){const skill=s.skills.find(item=>['gift','trade','steal','three','addTwo','reverse','wild'].includes(item.kind)&&!(item.kind==='wild'&&s.hand.some(card=>card.wild)));
+   if(skill&&!used){await page.locator(`.skill-card[data-skill-id="${skill.id}"]`).click();const select=skill.kind==='trade'?2:skill.kind==='gift'?1:0;for(let i=0;i<select;i++)await page.locator('.own-hand .playing-card').nth(i).click({position:{x:5,y:55}});if(['gift','trade','steal','three','addTwo'].includes(skill.kind)){const target=s.players.find(p=>p.id!==s.selfId);await page.locator(`.avatar-button[data-player-id="${target.id}"]`).click();await actionClick(page.getByRole('button',{name:`对${target.name}使用技能`,exact:true}));}else await actionClick(page.getByRole('button',{name:'使用技能',exact:true}));await page.locator(`.skill-fx[data-kind="${skill.kind}"]`).waitFor({state:'attached'});await page.waitForTimeout(250);await capture('desktop-packaged-skill-transparent.png');assert.equal((await state()).turnId,s.selfId);assert.equal(await page.locator('.modal-backdrop').count(),0);used=true;report.checks.push('packaged own-turn skill used inline, animated and retained normal turn');}
+   if(used&&played)break;
+   const now=await state();if(now.currentPlay){await actionClick(page.getByRole('button',{name:'不出',exact:true}));}else{for(const card of await page.locator('.own-hand .selected').all())await card.click({position:{x:5,y:55}});await page.locator('.own-hand .playing-card').first().click({position:{x:5,y:55}});const box=await page.locator('.own-hand .playing-card').first().boundingBox(),previous=now.version;await page.mouse.click(box.x+5,box.y+45,{button:'right'});await page.waitForFunction(version=>window.__packagedView.version>version,previous);played=true;}
+  }await page.waitForTimeout(180);
+ }
+ assert.ok(used,'Need a real local own-turn skill');assert.ok(played,'Need a real packaged right-click play');report.checks.push('packaged right-click played and rounds never entered an independent skill-use phase');
+ page.once('dialog',dialog=>dialog.accept());await page.getByRole('button',{name:'离开',exact:true}).click();await page.getByRole('heading',{name:'朋友，入座。'}).waitFor();created=false;report.checks.push('test room cleaned up');assert.deepEqual(report.errors,[]);
+ const python='C:/Users/admin/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/python.exe';const composite=`from PIL import Image\nimport sys,json\nfrom pathlib import Path\np=Path(sys.argv[1]); files=['desktop-packaged-transparent.png','desktop-packaged-skill-transparent.png','desktop-packaged-transparency-40.png']; result={}\nfor name in files:\n im=Image.open(p/name).convert('RGBA'); result[name]={'size':im.size,'alpha':im.getchannel('A').getextrema()}\n for label,color in [('dark','#171a1c'),('light','#ffffff')]:\n  bg=Image.new('RGBA',im.size,color); bg.alpha_composite(im); bg.convert('RGB').save(p/(name.replace('-transparent.png','-'+label+'.png')))\nprint(json.dumps(result))`;report.alpha=JSON.parse(execFileSync(python,['-c',composite,output],{encoding:'utf8'}));assert.equal(report.alpha['desktop-packaged-transparency-40.png'].alpha[0],0);assert.ok(report.alpha['desktop-packaged-transparency-40.png'].alpha[1]<=154);report.checks.push('native Electron alpha PNGs composited on dark and white backgrounds; 40% transparency also limits text and card alpha');
+ console.log(JSON.stringify(report,null,2));
+}catch(error){report.errors.push(error.stack||String(error));await page?.screenshot({path:path.join(output,'desktop-packaged-failure.png'),omitBackground:true}).catch(()=>{});console.error(JSON.stringify(report,null,2));process.exitCode=1;}finally{if(created&&page)await page.evaluate(()=>window.__localTestSocket?.send(JSON.stringify({type:'leave'}))).catch(()=>{});await writeFile(path.join(output,'desktop-packaged-report.json'),JSON.stringify(report,null,2));await app?.close().catch(()=>{});}

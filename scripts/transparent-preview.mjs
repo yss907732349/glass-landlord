@@ -20,6 +20,8 @@ try {
   await start.waitFor(); await page.waitForFunction(() => ![...document.querySelectorAll('button')].find(b => b.textContent === '开始这局')?.disabled);
   await start.click();
   await page.locator('.own-hand .playing-card').first().waitFor();
+  await page.getByRole('button', { name: '3 分', exact: true }).click({ timeout: 10000 }).catch(() => {});
+  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
   // Native Electron capture preserves alpha; the preview can be composited on any desktop colour.
   const png = await app.evaluate(async ({ BrowserWindow }) => {
     const window = BrowserWindow.getAllWindows()[0];
@@ -27,5 +29,12 @@ try {
     return image.toPNG().toString('base64');
   });
   await writeFile(path.join(project, 'artifacts/desktop-glass-transparent.png'), Buffer.from(png, 'base64'));
-  console.log(JSON.stringify(await page.evaluate(() => ({ viewport: [innerWidth, innerHeight], textShadow: getComputedStyle(document.querySelector('.card-corner')).textShadow, cardBackground: getComputedStyle(document.querySelector('.playing-card')).backgroundImage, bodyBackground: getComputedStyle(document.body).backgroundColor, oldSymbols: document.querySelectorAll('.card-suit,.opposite').length })), null, 2));
+  console.log(JSON.stringify(await page.evaluate(() => ({ viewport: [innerWidth, innerHeight], textShadow: getComputedStyle(document.querySelector('.card-corner')).textShadow, cardBackground: getComputedStyle(document.querySelector('.playing-card')).backgroundColor, stageOpacity: getComputedStyle(document.querySelector('.table-shell')).opacity, bodyBackground: getComputedStyle(document.body).backgroundColor, oldSymbols: document.querySelectorAll('.card-suit,.opposite').length })), null, 2));
+  await page.getByRole('button', { name: '设置', exact: true }).click();
+  await page.getByRole('slider', { name: '整体透明度', exact: true }).fill('50');
+  await page.getByRole('button', { name: '完成', exact: true }).click();
+  await page.locator('.settings-panel').waitFor({ state: 'hidden' });
+  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  const faded = await app.evaluate(async ({ BrowserWindow }) => (await BrowserWindow.getAllWindows()[0].webContents.capturePage()).toPNG().toString('base64'));
+  await writeFile(path.join(project, 'artifacts/desktop-ui-50-transparent.png'), Buffer.from(faded, 'base64'));
 } finally { await app.close(); }
