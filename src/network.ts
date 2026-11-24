@@ -40,7 +40,14 @@ export class RoomConnection {
         clearTimeout(timeout); this.reconnectUntil = 0; accepted = true;
         this.session = { code: message.code, token: message.token, playerId: message.playerId, endpoint };
         sessionStore().setItem('glass-room', JSON.stringify(this.session)); this.callbacks.joined(this.session); this.callbacks.status('已连接', false);
-      } else if (message.type === 'state') this.callbacks.state(message.state);
+      } else if (message.type === 'state') {
+        if (!Array.isArray(message.state.events)) {
+          this.leave();
+          this.callbacks.status('房间服务还是旧版，请更新服务后再联机。离线游玩可在设置中切换本机服务。', false);
+          return;
+        }
+        this.callbacks.state(message.state);
+      }
       else if (message.type === 'error') { clearTimeout(timeout); if (request.type === 'resume' && !accepted) this.forget(); this.callbacks.status(message.message, false); }
       else if (message.type === 'closed') { this.forget(); this.callbacks.status(message.message, false); }
     };

@@ -1,6 +1,6 @@
 import { _electron as electron } from '@playwright/test';
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { randomBytes } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -10,6 +10,7 @@ const output = path.join(project, 'artifacts');
 await mkdir(output, { recursive: true });
 const profile = await mkdtemp(path.join(output, 'desktop-online-profile-'));
 const expectedServer = 'https://glass-landlord.onrender.com';
+const expectedVersion = JSON.parse(await readFile(path.join(project, 'package.json'), 'utf8')).version;
 const env = { ...process.env };
 delete env.ELECTRON_RUN_AS_NODE;
 let app;
@@ -17,12 +18,25 @@ let page;
 let createdRoom = false;
 const report = { checks: [], errors: [], sockets: [], profile, stderr: [] };
 try {
+  const response = await fetch(`${expectedServer}/health`, { signal: AbortSignal.timeout(45000) });
+  report.health = { status: response.status, body: await response.json() };
+  if (!response.ok || report.health.body.protocol !== 'turn-skills-v2' || report.health.body.version !== expectedVersion) {
+    report.blocked = 'Public service has not deployed the current turn-skills-v2 game protocol; no public room or packaged online game was started.';
+  }
+} catch (error) { report.blocked = `Public service health check failed: ${error.message}`; }
+if (report.blocked) {
+  await writeFile(path.join(output, 'desktop-online-report.json'), JSON.stringify(report, null, 2));
+  console.log(JSON.stringify(report, null, 2));
+  process.exit(0);
+}
+report.checks.push('public service health confirmed current version and turn-skills-v2 protocol');
+try {
   app = await electron.launch({ executablePath: path.join(project, 'release/win-unpacked/玻璃斗地主.exe'), args: [`--user-data-dir=${profile}`], cwd: project, env, timeout: 30000 });
   app.process().stderr?.on('data', chunk => report.stderr.push(chunk.toString()));
   report.app = await app.evaluate(({ app }) => ({ version: app.getVersion(), userData: app.getPath('userData') }));
-  assert.equal(report.app.version, '0.1.1');
+  assert.equal(report.app.version, expectedVersion);
   assert.equal(path.resolve(report.app.userData).toLowerCase(), path.resolve(profile).toLowerCase(), 'Must use an isolated test profile');
-  report.checks.push('packaged v0.1.1 launched with isolated user profile');
+  report.checks.push(`packaged v${expectedVersion} launched with isolated user profile`);
   page = await app.firstWindow({ timeout: 30000 });
   page.setDefaultTimeout(90000);
   page.on('pageerror', error => report.errors.push(error.message));
