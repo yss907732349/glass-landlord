@@ -4,6 +4,8 @@ Windows 透明桌面三人斗地主，房间号＋密码联机，包含十一种
 
 ## 直接玩
 
+[下载 Windows 免安装版](https://github.com/yss907732349/glass-landlord/releases/latest) · [创建 Render 免费房间服务](https://render.com/deploy?repo=https://github.com/yss907732349/glass-landlord)
+
 Windows 免安装文件位于 `release/GlassLandlord-0.1.0-Windows.exe`。打开后创建房间并设置4～32位密码；也可添加两位陪练，准备后开始。陪练不需要额外服务。
 
 同一局域网：一人打开桌面版，在设置中查到或填写该电脑的服务地址，其他人连接它的局域网地址与端口。桌面版默认内置服务使用4318端口，若被占用则自动换一个空闲端口，可通过窗口服务地址查看。若使用固定服务，启动 `pnpm start` 默认监听 `0.0.0.0:4317`，朋友连接 `http://这台电脑的局域网IP:4317`；首次连接可能需要允许 Windows 专用网络防火墙。
