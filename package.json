@@ -1,0 +1,59 @@
+{
+  "name": "glass-landlord",
+  "version": "0.1.0",
+  "private": true,
+  "description": "玻璃斗地主 · 透明桌面与朋友技能局",
+  "type": "module",
+  "main": "desktop/main.cjs",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "server:dev": "node --experimental-strip-types server/index.ts",
+    "build": "tsc --noEmit && vite build && esbuild server/index.ts --bundle --platform=node --format=cjs --outfile=build/server.cjs --external:ws",
+    "start": "node build/server.cjs",
+    "test": "node --experimental-strip-types --test tests/*.test.ts",
+    "desktop": "electron .",
+    "pack": "pnpm run build && electron-builder --win portable --x64",
+    "test:browser": "node --experimental-strip-types scripts/playtest.mjs"
+  },
+  "dependencies": {
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "ws": "^8.18.3"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "@types/ws": "^8.18.1",
+    "@vitejs/plugin-react": "^5.0.0",
+    "vite": "^7.2.0",
+    "typescript": "^5.9.0",
+    "esbuild": "^0.27.0",
+    "electron": "^39.0.0",
+    "electron-builder": "^26.0.0",
+    "@playwright/test": "^1.57.0"
+  },
+  "build": {
+    "appId": "friends.glass.landlord",
+    "productName": "玻璃斗地主",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "build/**/*",
+      "desktop/**/*",
+      "package.json",
+      "THIRD_PARTY_NOTICES.md"
+    ],
+    "win": {
+      "target": [
+        "portable"
+      ],
+      "signAndEditExecutable": false
+    },
+    "artifactName": "GlassLandlord-${version}-Windows.${ext}"
+  },
+  "packageManager": "pnpm@11.25.0",
+  "author": "Glass Landlord"
+}

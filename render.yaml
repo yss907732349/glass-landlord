@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: glass-landlord
+    runtime: node
+    plan: free
+    buildCommand: corepack enable && pnpm install --frozen-lockfile --prod=false && pnpm build
+    startCommand: node build/server.cjs
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_VERSION
+        value: '24'
+      - key: NODE_ENV
+        value: production
+      - key: HOST
+        value: 0.0.0.0
+      - key: ELECTRON_SKIP_BINARY_DOWNLOAD
+        value: '1'
+      - key: ALLOWED_ORIGINS
+        value: https://yss907732349.github.io
