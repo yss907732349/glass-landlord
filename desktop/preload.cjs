@@ -20,3 +20,4 @@ addEventListener('mousemove', updatePassthrough);
 addEventListener('mouseup', updatePassthrough);
 addEventListener('beforeunload', () => ipcRenderer.send('window-control', 'passthrough', false));
 ipcRenderer.on('reset-layout', () => window.dispatchEvent(new Event('glass-reset-layout')));
+ipcRenderer.on('display-layout', (_event, layout) => window.dispatchEvent(new CustomEvent('glass-display-layout', { detail: layout })));

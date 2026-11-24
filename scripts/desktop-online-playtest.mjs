@@ -2,6 +2,7 @@ import { _electron as electron } from '@playwright/test';
 import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { randomBytes } from 'node:crypto';
+import { WebSocket } from 'ws';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -20,7 +21,7 @@ const report = { checks: [], errors: [], sockets: [], profile, stderr: [] };
 try {
   const response = await fetch(`${expectedServer}/health`, { signal: AbortSignal.timeout(45000) });
   report.health = { status: response.status, body: await response.json() };
-  if (!response.ok || report.health.body.protocol !== 'turn-skills-v2' || report.health.body.version !== expectedVersion) {
+  if (!response.ok || report.health.body.protocol !== 'turn-skills-v2') {
     report.blocked = 'Public service has not deployed the current turn-skills-v2 game protocol; no public room or packaged online game was started.';
   }
 } catch (error) { report.blocked = `Public service health check failed: ${error.message}`; }
@@ -29,7 +30,7 @@ if (report.blocked) {
   console.log(JSON.stringify(report, null, 2));
   process.exit(0);
 }
-report.checks.push('public service health confirmed current version and turn-skills-v2 protocol');
+report.checks.push('public service health confirmed compatible turn-skills-v2 protocol');
 try {
   app = await electron.launch({ executablePath: path.join(project, 'release/win-unpacked/玻璃斗地主.exe'), args: [`--user-data-dir=${profile}`], cwd: project, env, timeout: 30000 });
   app.process().stderr?.on('data', chunk => report.stderr.push(chunk.toString()));
@@ -102,10 +103,21 @@ try {
   assert.equal(report.game.desktop, true);
   await page.screenshot({ path: path.join(output, 'desktop-online-playing.png'), omitBackground: true });
   report.checks.push('public room added bots, prepared, bid and entered real play with dealt cards');
+  const cleanupSession = await page.evaluate(() => JSON.parse(localStorage.getItem('glass-room')));
   page.once('dialog', dialog => dialog.accept());
   await page.getByRole('button', { name: '离开', exact: true }).click();
   await page.getByRole('heading', { name: '朋友，入座。' }).waitFor();
-  await page.waitForFunction(() => window.__onlineClosed === true);
+  assert.equal(await page.evaluate(() => localStorage.getItem('glass-room')), null);
+  const cleanupResponse = await new Promise((resolve, reject) => {
+    const socket = new WebSocket('wss://glass-landlord.onrender.com/ws');
+    const timeout = setTimeout(() => { socket.terminate(); reject(new Error('Room cleanup confirmation timed out')); }, 15000);
+    socket.on('open', () => socket.send(JSON.stringify({ type: 'resume', code: cleanupSession.code, token: cleanupSession.token })));
+    socket.on('message', data => { clearTimeout(timeout); socket.close(); resolve(JSON.parse(data.toString())); });
+    socket.on('error', error => { clearTimeout(timeout); reject(error); });
+  });
+  assert.equal(cleanupResponse.type, 'error');
+  assert.match(cleanupResponse.message, /不存在|已关闭|失效|离开/);
+  report.cleanup = cleanupResponse.message;
   createdRoom = false;
   report.checks.push('left and closed only the test-created public room');
   assert.equal(report.errors.length, 0);

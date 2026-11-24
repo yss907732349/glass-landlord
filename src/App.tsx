@@ -8,7 +8,9 @@ import { RoomConnection } from './network.ts';
 import { DEFAULT_ROOM_SERVER } from './config.ts';
 import { TableEffects } from './TableEffects.tsx';
 
-declare global { interface Window { desktop?: { pin: (value: boolean) => void; passthrough: (value: boolean) => void; hide: () => void; minimize: () => void; close: () => void; info: () => Promise<{ addresses: string[] }>; isDesktop: boolean } } }
+type ScreenRect = { x: number; y: number; width: number; height: number };
+type DesktopLayout = { bounds: ScreenRect; primary: ScreenRect; displays: { id: number; bounds: ScreenRect; workArea: ScreenRect; scaleFactor: number }[]; reset?: boolean; previousBounds?: ScreenRect };
+declare global { interface Window { desktop?: { pin: (value: boolean) => void; passthrough: (value: boolean) => void; hide: () => void; minimize: () => void; close: () => void; info: () => Promise<{ addresses: string[]; layout?: DesktopLayout }>; isDesktop: boolean } } }
 const skillInfo = (kind: string) => SKILLS.find(skill => skill.kind === kind)!;
 const UI_WIDTH = 1080, UI_HEIGHT = 560;
 const PHASE_NAMES: Record<string, string> = { lobby: '等待朋友入座', bidding: '叫地主', playing: '出牌', skill_discard: '弃掉多余技能', skill_use: '请更新客户端', finished: '本局结束' };
@@ -39,6 +41,8 @@ export default function App() {
   const [opacity, setOpacity] = useState(() => Math.max(15, Math.min(100, Number(localStorage.getItem('glass-ui-opacity')) || 88)));
   const [pinned, setPinned] = useState(true); const [locked, setLocked] = useState(false);
   const [position, setPosition] = useState({ x: 0, y: 0 }); const [size, setSize] = useState({ w: innerWidth, h: innerHeight });
+  const [desktopLayout, setDesktopLayout] = useState<DesktopLayout | null>(null);
+  const layoutRef = useRef<DesktopLayout | null>(null);
   const [selected, setSelected] = useState<string[]>([]); const [discardIds, setDiscardIds] = useState<string[]>([]);
   const [chosenSkill, setChosenSkill] = useState<SkillCard | null>(null); const [target, setTarget] = useState(''); const [skillPending, setSkillPending] = useState(false);
   const [wildRanks, setWildRanks] = useState<Record<string, number>>({}); const [peekOpen, setPeekOpen] = useState(false); const lastPeek = useRef('');
@@ -49,9 +53,32 @@ export default function App() {
     state: setView, status: (text, waiting) => { setStatus(text); setBusy(waiting); if (!waiting) setSkillPending(false); },
     joined: () => { setPassword(''); }, left: () => { setView(null); setSelected([]); setChosenSkill(null); }
   });
-  useEffect(() => { network.current!.restore(); window.desktop?.info().then(info => setLocalAddresses(info.addresses)); return () => network.current!.dispose(); }, []);
+  function applyDesktopLayout(next: DesktopLayout, initial = false) {
+    const previous = next.previousBounds || layoutRef.current?.bounds;
+    layoutRef.current = next; setDesktopLayout(next);
+    setSize({ w: next.bounds.width, h: next.bounds.height });
+    setPosition(current => {
+      let x = initial || next.reset || !previous ? next.primary.x + next.primary.width / 2 : previous.x + previous.width / 2 + current.x - next.bounds.x;
+      let y = initial || next.reset || !previous ? next.primary.y + next.primary.height / 2 : previous.y + previous.height / 2 + current.y - next.bounds.y;
+      if (!next.displays.some(display => x >= display.workArea.x && x <= display.workArea.x + display.workArea.width && y >= display.workArea.y && y <= display.workArea.y + display.workArea.height)) {
+        x = next.primary.x + next.primary.width / 2; y = next.primary.y + next.primary.height / 2;
+      }
+      return { x: x - next.bounds.width / 2, y: y - next.bounds.height / 2 };
+    });
+  }
+  function resetPosition() {
+    const layout = layoutRef.current;
+    setPosition(layout ? { x: layout.primary.x + layout.primary.width / 2 - layout.bounds.width / 2, y: layout.primary.y + layout.primary.height / 2 - layout.bounds.height / 2 } : { x: 0, y: 0 });
+    setZoom(1);
+  }
+  useEffect(() => { network.current!.restore(); window.desktop?.info().then(info => { setLocalAddresses(info.addresses); if (info.layout) applyDesktopLayout(info.layout, true); }); return () => network.current!.dispose(); }, []);
   useEffect(() => { const update = () => setSize({ w: innerWidth, h: innerHeight }); addEventListener('resize', update); const timer = setInterval(() => setNow(Date.now()), 500); return () => { removeEventListener('resize', update); clearInterval(timer); }; }, []);
-  useEffect(() => { const reset = () => { setPosition({ x: 0, y: 0 }); setZoom(1); setOpacity(88); }; addEventListener('glass-reset-layout', reset); return () => removeEventListener('glass-reset-layout', reset); }, []);
+  useEffect(() => {
+    const reset = () => { resetPosition(); setOpacity(88); };
+    const displays = (event: Event) => applyDesktopLayout((event as CustomEvent<DesktopLayout>).detail);
+    addEventListener('glass-reset-layout', reset); addEventListener('glass-display-layout', displays);
+    return () => { removeEventListener('glass-reset-layout', reset); removeEventListener('glass-display-layout', displays); };
+  }, []);
   useEffect(() => { localStorage.setItem('glass-zoom', String(zoom)); }, [zoom]);
   useEffect(() => { localStorage.setItem('glass-ui-opacity', String(opacity)); }, [opacity]);
   useEffect(() => {
@@ -68,7 +95,7 @@ export default function App() {
   const right = view?.players[(selfIndex + 1) % 3], left = view?.players[(selfIndex + 2) % 3];
   const myTurn = view?.turnId === view?.selfId;
   const skillTurn = !!view && view.phase === 'playing' && view.turnId === view.selfId && !view.paused;
-  const fit = Math.min(size.w / (UI_WIDTH + 40), size.h / (UI_HEIGHT + 40), 1.25); const scale = fit * zoom;
+  const fit = Math.min((desktopLayout?.primary.width || size.w) / (UI_WIDTH + 40), (desktopLayout?.primary.height || size.h) / (UI_HEIGHT + 40), 1.25); const scale = fit * zoom;
   const action = (value: Parameters<RoomConnection['action']>[0]) => { setStatus(''); if (!network.current!.action(value)) setStatus('尚未连接，请等待恢复或重新进入房间。'); };
   const toggleCard = (id: string) => setSelected(ids => ids.includes(id) ? ids.filter(item => item !== id) : [...ids, id]);
   const toggleDiscard = (id: string) => setDiscardIds(ids => ids.includes(id) ? ids.filter(item => item !== id) : [...ids, id]);
@@ -80,7 +107,7 @@ export default function App() {
   }
   function moveDrag(event: ReactPointerEvent<HTMLButtonElement>) {
     if (!drag.current) return;
-    setPosition({ x: Math.max(-size.w * .35, Math.min(size.w * .35, drag.current.startX + event.clientX - drag.current.x)), y: Math.max(-size.h * .35, Math.min(size.h * .35, drag.current.startY + event.clientY - drag.current.y)) });
+    setPosition({ x: drag.current.startX + event.clientX - drag.current.x, y: drag.current.startY + event.clientY - drag.current.y });
   }
   function enter(event: React.FormEvent) {
     event.preventDefault(); localStorage.setItem('glass-name', name.trim()); localStorage.setItem('glass-server', address.trim());
@@ -153,7 +180,7 @@ export default function App() {
   return <div className={`app-root ${window.desktop ? 'desktop-mode' : 'browser-mode'} ${view ? 'has-game' : 'in-lobby'}`} style={{ '--ui-opacity': opacity / 100 } as CSSProperties}>
     <main className="table-shell" style={{ transform: `translate(calc(-50% + ${position.x}px),calc(-50% + ${position.y}px)) scale(${scale})` }}>
       <header className="topbar"><div className="wordmark"><span className="brand-mark">♠</span><div><strong>玻璃斗地主</strong><span>朋友局，别客气。</span></div></div>
-        <div className="window-tools"><button className="icon-button move-handle" title="拖动整套界面" aria-label="拖动整套界面" onPointerDown={startDrag} onPointerMove={moveDrag} onPointerUp={() => { drag.current = null; }} onPointerCancel={() => { drag.current = null; }} onLostPointerCapture={() => { drag.current = null; }}>⠿</button><span className="toolbar-divider"/><button className="zoom-label" title="重置位置与缩放" onClick={() => { setZoom(1); setPosition({ x: 0, y: 0 }); }}>{Math.round(zoom * 100)}%</button><span className="toolbar-divider"/><button className={`icon-button ${pinned ? 'toggled' : ''}`} aria-label={pinned ? '取消置顶' : '置顶'} title={window.desktop ? '置顶' : '桌面版支持置顶'} onClick={() => { setPinned(!pinned); window.desktop?.pin(!pinned); }}>♧</button><button className="icon-button" aria-label="玩法说明" onClick={() => setHelp(true)}>?</button><button className={`icon-button ${settings ? 'toggled' : ''}`} aria-label="设置" onClick={() => setSettings(!settings)}>⚙</button>{window.desktop && <><button className="icon-button" aria-label="最小化" onClick={() => window.desktop?.minimize()}>_</button><button className="icon-button close-button" aria-label="关闭" onClick={() => window.desktop?.close()}>×</button></>}</div>
+        <div className="window-tools"><button className="icon-button move-handle" title="拖动整套界面" aria-label="拖动整套界面" onPointerDown={startDrag} onPointerMove={moveDrag} onPointerUp={() => { drag.current = null; }} onPointerCancel={() => { drag.current = null; }} onLostPointerCapture={() => { drag.current = null; }}>⠿</button><span className="toolbar-divider"/><button className="zoom-label" title="重置位置与缩放" onClick={resetPosition}>{Math.round(zoom * 100)}%</button><span className="toolbar-divider"/><button className={`icon-button ${pinned ? 'toggled' : ''}`} aria-label={pinned ? '取消置顶' : '置顶'} title={window.desktop ? '置顶' : '桌面版支持置顶'} onClick={() => { setPinned(!pinned); window.desktop?.pin(!pinned); }}>♧</button><button className="icon-button" aria-label="玩法说明" onClick={() => setHelp(true)}>?</button><button className={`icon-button ${settings ? 'toggled' : ''}`} aria-label="设置" onClick={() => setSettings(!settings)}>⚙</button>{window.desktop && <><button className="icon-button" aria-label="最小化" onClick={() => window.desktop?.minimize()}>_</button><button className="icon-button close-button" aria-label="关闭" onClick={() => window.desktop?.close()}>×</button></>}</div>
       </header>
       {!view ? <section className="welcome-layout">
         <div className="welcome-art"><span className="welcome-caption">没有桌布，也能开一桌。</span><h1>好牌靠手气。<br/>翻盘靠捣乱。</h1><p>透明的牌，藏不住的坏心思。<br/>叫上两位朋友，把这局摆在桌面上。</p><div className="showcase-cards"><PlayingCard card={{ id: 'show1', rank: 14, suit: 'S' }} disabled/><PlayingCard card={{ id: 'show2', rank: 13, suit: 'H' }} disabled/><PlayingCard card={{ id: 'show3', rank: 3, suit: 'W', wild: true }} disabled/></div><div className="showcase-tag"><span>↶</span><div><strong>下一手，反着来。</strong><small>11 种技能，让朋友重新认识你。</small></div></div></div>
@@ -181,11 +208,11 @@ export default function App() {
       </>}
       {status && status !== '已连接' && <div className={`status-toast interactive ${busy ? 'connecting' : ''}`} role="status"><span>{busy ? '◌' : '·'}</span>{status}<button aria-label="关闭提示" onClick={() => setStatus('')}>×</button></div>}
       <TableEffects view={view}/>
-      {[-1, 1].map(sign => <button key={sign} className={`resize-handle interactive ${sign < 0 ? 'top-left' : 'bottom-right'}`} aria-label={sign < 0 ? '左上角拖动缩放' : '右下角拖动缩放'} title="按住拖动缩放，双击恢复" onPointerDown={event => resizeDown(event, sign)} onPointerMove={resizeMove} onPointerUp={() => { sizing.current = null; }} onPointerCancel={() => { sizing.current = null; }} onLostPointerCapture={() => { sizing.current = null; }} onDoubleClick={() => { setZoom(1); setPosition({ x: 0, y: 0 }); }}><span aria-hidden="true"/></button>)}
+      {[-1, 1].map(sign => <button key={sign} className={`resize-handle interactive ${sign < 0 ? 'top-left' : 'bottom-right'}`} aria-label={sign < 0 ? '左上角拖动缩放' : '右下角拖动缩放'} title="按住拖动缩放，双击恢复" onPointerDown={event => resizeDown(event, sign)} onPointerMove={resizeMove} onPointerUp={() => { sizing.current = null; }} onPointerCancel={() => { sizing.current = null; }} onLostPointerCapture={() => { sizing.current = null; }} onDoubleClick={resetPosition}><span aria-hidden="true"/></button>)}
       <footer className="table-footer"><span>透明桌面 · 三人技能局</span><span>{window.desktop ? '空白处可点击桌面 · Ctrl+Shift+H 隐藏 / 显示' : '浏览器版可联机 · 透明置顶请打开桌面版'}</span></footer>
       {view?.phase === 'finished' && <div className="modal-backdrop interactive"><section className="modal glass-panel result-panel"><span className="result-suit">{(self?.role === 'landlord' && view.winner === 'landlord') || (self?.role === 'farmer' && view.winner === 'farmers') ? '♛' : '♠'}</span><h2>{view.winner === 'landlord' ? '地主拿下这局。' : '农民一起翻盘。'}</h2><p>{view.players.find(p => p.id === view.winnerId)?.name}率先出完手牌 · 最终倍率 ×{view.multiplier}</p><div className="result-players">{view.players.map(p => <span key={p.id}>{p.name}<b>{p.role === 'landlord' ? '地主' : '农民'}</b><small>剩 {p.cardCount} 张</small></span>)}</div>{view.hostId === view.selfId ? <button className="primary-button" onClick={() => action({ type: 'restart' })}>再来一局</button> : <p>等房主开启下一局</p>}<button className="text-button" onClick={() => network.current!.leave()}>回到入座页</button></section></div>}
       {peekOpen && !!view?.privatePeek.length && <aside className="peek-inline interactive"><div><span>偷看结果 · 仅你可见</span><button className="text-button" aria-label="收起偷看结果" onClick={() => setPeekOpen(false)}>×</button></div><div className="peek-cards">{view.privatePeek.map(card => <PlayingCard card={card} key={card.id} small disabled/>)}</div></aside>}
-      {settings && <div className="modal-backdrop interactive"><section className="modal glass-panel settings-panel"><button className="modal-close" aria-label="关闭" onClick={() => setSettings(false)}>×</button><h2>界面设置</h2><label>整体透明度 <b>{100 - opacity}%</b><input aria-label="整体透明度" type="range" min="0" max="85" value={100 - opacity} onChange={e => setOpacity(100 - Number(e.target.value))}/></label><p>牌面、文字和按钮一起变淡。Ctrl+Shift+0 可恢复可见度和布局。</p><label>界面缩放 <b>{Math.round(zoom * 100)}%</b><input type="range" min="35" max="200" value={Math.round(zoom * 100)} onChange={e => setZoom(Number(e.target.value) / 100)}/></label><label className="checkbox-label"><input type="checkbox" checked={locked} onChange={e => setLocked(e.target.checked)}/>锁定布局，避免误拖</label><label>房间服务地址<input value={address} onChange={e => { setAddress(e.target.value); localStorage.setItem('glass-server', e.target.value); }} placeholder="留空连接默认联机服务" disabled={!!view}/></label><p>默认已配置公网联机服务，朋友们打开新版即可在同一处建房和加入。离线陪练或局域网游玩可切换本机服务。</p>{!view && <div className="server-shortcuts"><button className="text-button" onClick={() => { setAddress(DEFAULT_ROOM_SERVER); localStorage.setItem("glass-server", DEFAULT_ROOM_SERVER); }}>使用默认联机服务</button>{window.desktop && <button className="text-button" onClick={() => { setAddress(location.origin); localStorage.setItem("glass-server", location.origin); }}>使用本机服务（离线 / 局域网）</button>}</div>}{localAddresses.length > 0 && <div className="local-addresses"><strong>本机房间地址 · 同一局域网可用</strong>{localAddresses.map(item => <button className="text-button" key={item} onClick={() => navigator.clipboard.writeText(item).then(() => setStatus("局域网地址已复制。"))}>{item} ⧉</button>)}</div>}<button className="secondary-button" onClick={() => { setPosition({ x: 0, y: 0 }); setZoom(1); }}>恢复位置与大小</button><button className="primary-button" onClick={() => setSettings(false)}>完成</button></section></div>}
+      {settings && <div className="modal-backdrop interactive"><section className="modal glass-panel settings-panel"><button className="modal-close" aria-label="关闭" onClick={() => setSettings(false)}>×</button><h2>界面设置</h2><label>整体透明度 <b>{100 - opacity}%</b><input aria-label="整体透明度" type="range" min="0" max="85" value={100 - opacity} onChange={e => setOpacity(100 - Number(e.target.value))}/></label><p>牌面、文字和按钮一起变淡。Ctrl+Shift+0 可恢复可见度和布局。</p><label>界面缩放 <b>{Math.round(zoom * 100)}%</b><input type="range" min="35" max="200" value={Math.round(zoom * 100)} onChange={e => setZoom(Number(e.target.value) / 100)}/></label><label className="checkbox-label"><input type="checkbox" checked={locked} onChange={e => setLocked(e.target.checked)}/>锁定布局，避免误拖</label><label>房间服务地址<input value={address} onChange={e => { setAddress(e.target.value); localStorage.setItem('glass-server', e.target.value); }} placeholder="留空连接默认联机服务" disabled={!!view}/></label><p>默认已配置公网联机服务，朋友们打开新版即可在同一处建房和加入。离线陪练或局域网游玩可切换本机服务。</p>{!view && <div className="server-shortcuts"><button className="text-button" onClick={() => { setAddress(DEFAULT_ROOM_SERVER); localStorage.setItem("glass-server", DEFAULT_ROOM_SERVER); }}>使用默认联机服务</button>{window.desktop && <button className="text-button" onClick={() => { setAddress(location.origin); localStorage.setItem("glass-server", location.origin); }}>使用本机服务（离线 / 局域网）</button>}</div>}{localAddresses.length > 0 && <div className="local-addresses"><strong>本机房间地址 · 同一局域网可用</strong>{localAddresses.map(item => <button className="text-button" key={item} onClick={() => navigator.clipboard.writeText(item).then(() => setStatus("局域网地址已复制。"))}>{item} ⧉</button>)}</div>}<button className="secondary-button" onClick={resetPosition}>恢复位置与大小</button><button className="primary-button" onClick={() => setSettings(false)}>完成</button></section></div>}
       {help && <div className="modal-backdrop interactive"><section className="modal glass-panel help-panel"><button className="modal-close" aria-label="关闭" onClick={() => setHelp(false)}>×</button><h2>打牌认真，捣乱随意。</h2><p>标准三人斗地主：叫分最高者成为地主并获得底牌，地主先出。连续两家不出后清桌，原领出者开启下一轮。</p><div className="rule-facts"><span>地主<b>抽 2 · 留 3</b></span><span>每名农民<b>抽 1 · 留 2</b></span><span>使用时机<b>自己的出牌回合</b></span></div><p>每轮结束抽技能，超出上限先弃牌，然后继续出牌。技能可在自己的出牌回合连续使用，不占出牌机会。点技能、按需选手牌、点对手头像，再点使用。拖过手牌批量选择，右键快速出牌。角落拖动缩放。合法出完最后一手立即获胜。</p><div className="help-skill-list">{SKILLS.map(skill => <div key={skill.kind}><strong>{skill.name}<small>{skill.weight}%</small></strong><p>{skill.description}</p></div>)}</div><p>赖子只代替3～A，不参与炸弹。生成的普通牌允许重复点数，炸弹仍为四张同点数。身份互换每局一次、全桌洗手每局两次。</p><button className="primary-button" onClick={() => setHelp(false)}>懂了，开整</button></section></div>}
       {history && <div className="modal-backdrop interactive"><section className="modal glass-panel history-panel"><button className="modal-close" aria-label="关闭" onClick={() => setHistory(false)}>×</button><h2>刚才发生了什么</h2><ol className="history-list">{view?.logs.slice().reverse().map((log, i) => <li key={`${i}-${log}`}>{log}</li>)}</ol></section></div>}
     </main>
