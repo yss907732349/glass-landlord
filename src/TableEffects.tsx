@@ -5,9 +5,10 @@ import { SKILLS } from './shared/skills.ts';
 import './effects.css';
 
 type Point = { x: number; y: number };
-type Effect = { event: GameEvent; selfId: string; players: PlayerView[]; direction: 1 | -1; expires: number };
+type Effect = { event: GameEvent; selfId: string; players: PlayerView[]; direction: 1 | -1; expires: number; anchors: Record<string, Point>; captionScale: number };
 const CENTER: Point = { x: 540, y: 210 };
 const LIFETIME = 1800;
+const SKILL_LIFETIME = 3000;
 const MAX_EFFECTS = 5;
 const css = (values: Record<string, string | number>): CSSProperties => values as CSSProperties;
 const place = (point: Point): CSSProperties => ({ left: point.x, top: point.y });
@@ -18,6 +19,39 @@ function playerPoint(effect: Effect, id: string | undefined, area: 'hand' | 'ski
   if (index < 0 || index === self) return area === 'skill' ? { x: 540, y: 515 } : { x: 540, y: 410 };
   const right = index === (self + 1) % 3;
   return { x: right ? 940 : 140, y: area === 'skill' ? 125 : 155 };
+}
+
+function captureAnchors(view: GameView): { anchors: Record<string, Point>; captionScale: number } {
+  const table = document.querySelector('.table-shell');
+  const rect = table?.getBoundingClientRect();
+  if (!rect?.width || !rect.height) return { anchors: {}, captionScale: 1 };
+  const anchors: Record<string, Point> = {};
+  for (const player of view.players) {
+    const element = player.id === view.selfId ? table?.querySelector('.own-heading')
+      : [...(table?.querySelectorAll<HTMLElement>('.avatar-button') ?? [])].find(avatar => avatar.dataset.playerId === player.id);
+    const box = element?.getBoundingClientRect();
+    if (box?.width && box.height) anchors[player.id] = { x: (box.x + box.width / 2 - rect.x) * 1080 / rect.width, y: (box.y + box.height / 2 - rect.y) * 560 / rect.height };
+  }
+  return { anchors, captionScale: Math.max(1, .7 / (rect.width / 1080)) };
+}
+
+function SkillDirection({ effect, targetId }: { effect: Effect; targetId: string }) {
+  const from = effect.anchors[effect.event.actorId] ?? playerPoint(effect, effect.event.actorId);
+  const to = effect.anchors[targetId] ?? playerPoint(effect, targetId);
+  const distance = Math.hypot(to.x - from.x, to.y - from.y);
+  if (distance < 1) return null;
+  const inset = Math.min(21, distance / 4);
+  const start = { x: from.x + (to.x - from.x) * inset / distance, y: from.y + (to.y - from.y) * inset / distance };
+  const end = { x: to.x - (to.x - from.x) * inset / distance, y: to.y - (to.y - from.y) * inset / distance };
+  const control = { x: (start.x + end.x) / 2, y: Math.max(55, Math.min(start.y, end.y) - (Math.abs(to.x - from.x) > 400 ? 38 : 15)) };
+  const path = `M${start.x} ${start.y} Q${control.x} ${control.y} ${end.x} ${end.y}`;
+  const markerId = `skill-arrow-${effect.event.id}-${targetId}`.replace(/[^a-zA-Z0-9_-]/g, '-');
+  return <svg className="fx-skill-direction" viewBox="0 0 1080 560" aria-hidden="true" data-actor-id={effect.event.actorId} data-target-id={targetId} data-from-x={from.x} data-from-y={from.y} data-to-x={to.x} data-to-y={to.y}>
+    <defs><marker id={markerId} markerUnits="userSpaceOnUse" markerWidth="15" markerHeight="15" refX="12" refY="7.5" orient="auto"><path d="M2 2L12 7.5L2 13"/></marker></defs>
+    <path className="fx-direction-track" d={path} markerEnd={`url(#${markerId})`}/>
+    <path className="fx-direction-flow" d={path} pathLength="1"/>
+    <circle className="fx-direction-pulse" r="3"><animateMotion dur=".85s" repeatCount="3" path={path}/></circle>
+  </svg>;
 }
 
 /** Neutral backs only: flights never contain card rank/suit or hidden hand data. */
@@ -83,7 +117,6 @@ function SkillVisual({ effect }: { effect: Effect }) {
       return <><span className="fx-spawn-burst" style={place(CENTER)} aria-hidden="true">✧</span><Flights from={CENTER} to={target} count={count}/><Halo point={target}/><FloatCount point={target} text={`＋${count} 张`} gain/></>;
     }
     case 'wild': return <><span className="fx-wild-bloom" style={place(CENTER)} aria-hidden="true"><i/><i/><b>✧</b></span><Flights from={CENTER} to={actor} count={1} gold/><Halo point={actor} gold/><FloatCount point={actor} text="赖子 ＋1" gain/></>;
-    case 'mutual': return <><span className="fx-spawn-burst" style={place(CENTER)} aria-hidden="true">✧</span><Flights from={CENTER} to={actor} count={3}/><Flights from={CENTER} to={target} count={3} delay={.19}/><Halo point={actor}/><Halo point={target}/><FloatCount point={actor} text="＋3 张" gain/><FloatCount point={target} text="＋3 张" gain/></>;
     case 'peek': return <><Halo point={target}/><Peek point={target} count={targetPlayer?.cardCount ?? 3}/></>;
     case 'shuffle': return <>
       {effect.players.map(player => <span key={player.id}><Flights from={playerPoint(effect, player.id)} to={CENTER} count={3} delay={0} duration={.62}/><Flights from={CENTER} to={playerPoint(effect, player.id)} count={3} delay={.73} duration={.65} returnPath/></span>)}
@@ -99,16 +132,24 @@ function SkillVisual({ effect }: { effect: Effect }) {
   }
 }
 
-function EventVisual({ effect }: { effect: Effect }) {
+function EventVisual({ effect, showSkillFeedback }: { effect: Effect; showSkillFeedback: boolean }) {
   const { event } = effect;
   const actor = playerPoint(effect, event.actorId);
   const skillPoint = playerPoint(effect, event.actorId, 'skill');
   const actorName = effect.players.find(player => player.id === event.actorId)?.name ?? '朋友';
-  const skillName = SKILLS.find(skill => skill.kind === event.skillKind)?.name ?? '技能';
+  const skill = SKILLS.find(skill => skill.kind === event.skillKind);
   const targetName = effect.players.find(player => player.id === event.targetId)?.name;
-  const announcementPoint = { x: actor.x, y: event.actorId === effect.selfId ? 325 : 245 };
+  const globalSkill = event.skillKind === 'shuffle' || event.skillKind === 'reverse';
+  const targets = event.targetId ? [event.targetId] : globalSkill ? effect.players.filter(player => player.id !== event.actorId).map(player => player.id) : [];
+  const targetText = targetName ?? (globalSkill ? '全场' : '自己');
   return <div className={`skill-fx fx-event-${event.type} ${event.skillKind ? `fx-kind-${event.skillKind}` : ''}`} data-event-id={event.id} data-kind={event.skillKind ?? event.type}>
-    {event.type === 'skill' && <><div className="fx-announcement" style={place(announcementPoint)} role="status"><span className="fx-announcement-symbol">{event.skillKind === 'reverse' ? '↶' : event.skillKind === 'identity' ? '♛' : '✧'}</span><div><strong>{actorName} · {skillName}</strong><small>{targetName ? `对 ${targetName} 使用` : event.skillKind === 'shuffle' ? '全桌手牌重新分配' : event.skillKind === 'reverse' ? '接牌顺序已经改变' : '技能已生效'}</small></div></div><SkillVisual effect={effect}/></>}
+    {event.type === 'skill' && <>{showSkillFeedback && <>
+      {targets.map(targetId => <SkillDirection effect={effect} targetId={targetId} key={targetId}/>)}
+      <div className="fx-announcement" style={{ ...place(CENTER), ...css({ '--fx-caption-scale': effect.captionScale }) }} role="status" data-actor-id={event.actorId} data-target-id={event.targetId ?? (globalSkill ? 'all' : event.actorId)}>
+        <div className="fx-announcement-route"><span>{actorName}</span><b aria-hidden="true">→</b><span>{targetText}</span></div>
+        <strong>{skill?.name ?? '技能'}</strong><p>{skill?.description ?? '技能已生效。'}</p>
+      </div>
+    </>}<SkillVisual effect={effect}/></>}
     {event.type === 'drawSkills' && <><Flights from={CENTER} to={skillPoint} count={event.count ?? 1} skill delay={.05}/><FloatCount point={skillPoint} text={`技能 ＋${event.count ?? 1}`} gain delay={.55}/></>}
     {event.type === 'discardSkills' && <><div className="fx-discard-drift" style={place(skillPoint)} aria-hidden="true">{Array.from({ length: Math.min(event.count ?? 1, 5) }, (_, index) => <i key={index} style={css({ '--discard-i': index })}>✧</i>)}</div><FloatCount point={skillPoint} text={`弃技能 ${event.count ?? 1}`} delay={.15}/></>}
     {event.type === 'play' && <Flights from={actor} to={CENTER} count={Math.min(event.count ?? 1, 4)} delay={0} duration={.52}/>}
@@ -142,9 +183,17 @@ export function TableEffects({ view }: { view: GameView | null }) {
     for (const event of events) seen.current.add(event.id);
     if (seen.current.size > 120) seen.current = new Set(events.map(event => event.id));
     if (!fresh.length || view.paused) return;
-    const batch = fresh.filter(event => event.type !== 'chat').slice(-MAX_EFFECTS).map(event => ({ event, selfId: view.selfId, players: view.players, direction: view.direction, expires: now + LIFETIME }));
+    const layout = captureAnchors(view);
+    const batch = fresh.filter(event => event.type !== 'chat').slice(-MAX_EFFECTS).map(event => ({ event, selfId: view.selfId, players: view.players, direction: view.direction, expires: now + (event.type === 'skill' ? SKILL_LIFETIME : LIFETIME), ...layout }));
     if (!batch.length) return;
-    setActive(previous => [...previous.filter(effect => effect.expires > now), ...batch].slice(-MAX_EFFECTS));
+    setActive(previous => {
+      const next = [...previous.filter(effect => effect.expires > now), ...batch];
+      const latestSkill = next.filter(effect => effect.event.type === 'skill').at(-1);
+      const shown = next.slice(-MAX_EFFECTS);
+      // Rapid card plays or skill draws must not erase an unread announcement.
+      if (latestSkill && !shown.includes(latestSkill)) shown.unshift(latestSkill);
+      return shown;
+    });
   }, [view]);
   useEffect(() => {
     const resume = () => { needsBaseline.current = true; setActive(previous => previous.length ? [] : previous); };
@@ -156,5 +205,6 @@ export function TableEffects({ view }: { view: GameView | null }) {
     const timer = setTimeout(() => setActive(previous => previous.filter(effect => effect.expires > Date.now())), Math.max(0, Math.min(...active.map(effect => effect.expires)) - Date.now()));
     return () => clearTimeout(timer);
   }, [active]);
-  return <div className="table-effects" aria-live="polite" aria-atomic="false">{active.map(effect => <EventVisual effect={effect} key={effect.event.id}/>)}</div>;
+  const latestSkill = active.filter(effect => effect.event.type === 'skill').at(-1)?.event.id;
+  return <div className="table-effects" aria-live="polite" aria-atomic="false">{active.map(effect => <EventVisual effect={effect} showSkillFeedback={effect.event.id === latestSkill} key={effect.event.id}/>)}</div>;
 }

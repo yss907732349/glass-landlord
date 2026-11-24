@@ -1,5 +1,5 @@
 import { makeDeck, sortCards } from './cards.ts';
-import { beats, classifyAgainst } from './rules.ts';
+import { classifyAll, classifyAgainst } from './rules.ts';
 import { getSkill, SKILLS } from './skills.ts';
 import { QUICK_CHATS } from './chat.ts';
 import type { Card, GameAction, GameEvent, GameView, Phase, PlayedCards, SkillCard } from './types.ts';
@@ -30,6 +30,7 @@ export class Game {
   identityUses = 0;
   shuffleUses = 0;
   wildCreated = 0;
+  skillUsed = 0;
   logs: string[] = [];
   events: GameEvent[] = [];
   winner: 'landlord' | 'farmers' | null = null;
@@ -88,6 +89,11 @@ export class Game {
     this.deadline = this.clock() + (this.discardResumeRemaining ?? DURATIONS.playing);
     this.discardResumeRemaining = null;
   }
+  private beginTurn(id: string): void {
+    this.turnId = id;
+    this.skillUsed = 0;
+    this.timed('playing');
+  }
   private next(id: string, direction = this.direction): string {
     const index = this.players.findIndex(player => player.id === id);
     return this.players[(index + direction + this.players.length) % this.players.length].id;
@@ -109,9 +115,9 @@ export class Game {
   private take(player: Player, cards: Card[]): void {
     const ids = new Set(cards.map(card => card.id)); player.hand = player.hand.filter(card => !ids.has(card.id));
   }
-  private generated(rank?: number, small = false): Card {
+  private generated(rank?: number): Card {
     const suits = ['S', 'H', 'C', 'D'] as const;
-    return { id: this.id('extra'), rank: rank ?? (3 + this.rand(small ? 5 : 13)), suit: suits[this.rand(4)], generated: true };
+    return { id: this.id('extra'), rank: rank ?? (3 + this.rand(13)), suit: suits[this.rand(4)], generated: true };
   }
   private invalidatePeeks(): void { for (const p of this.players) p.peek = []; }
 
@@ -156,13 +162,14 @@ export class Game {
     this.phase = 'lobby'; this.landlordId = null; this.turnId = null; this.direction = 1;
     this.bottom = []; this.currentPlay = null; this.lastActorId = null; this.passCount = 0;
     this.trick = 1; this.multiplier = 1; this.bidMax = 0; this.bidWinner = null; this.bidCount = 0;
-    this.identityUses = 0; this.shuffleUses = 0; this.wildCreated = 0;
+    this.identityUses = 0; this.shuffleUses = 0; this.wildCreated = 0; this.skillUsed = 0;
     this.winner = null; this.winnerId = null; this.deadline = null; this.paused = false;
     this.pausedRemaining = 0; this.discardResumeRemaining = null; this.events = [];
     for (const p of this.players) { p.hand = []; p.skills = []; p.peek = []; p.ready = false; p.bid = null; p.plays = 0; }
   }
 
   private deal(): void {
+    this.skillUsed = 0;
     const deck = this.shuffled(makeDeck());
     this.players.forEach((p, index) => { p.hand = sortCards(deck.slice(index * 17, index * 17 + 17)); p.bid = null; p.plays = 0; });
     this.bottom = deck.slice(51); this.bidMax = 0; this.bidWinner = null; this.bidCount = 0;
@@ -175,8 +182,8 @@ export class Game {
     this.landlordId = this.bidWinner;
     const landlord = this.getPlayer(this.landlordId);
     landlord.hand = sortCards([...landlord.hand, ...this.bottom]);
-    this.multiplier = this.bidMax; this.turnId = landlord.id;
-    this.timed('playing'); this.log(`${landlord.name} 成为地主，${this.bidMax}分起。`);
+    this.multiplier = this.bidMax; this.beginTurn(landlord.id);
+    this.log(`${landlord.name} 成为地主，${this.bidMax}分起。`);
   }
 
   private availablePool(): typeof SKILLS {
@@ -189,19 +196,19 @@ export class Game {
     throw new Error('技能牌池为空。');
   }
   private beginSkills(leaderId: string): void {
-    this.currentPlay = null; this.passCount = 0; this.turnId = leaderId; this.trick++;
+    this.currentPlay = null; this.passCount = 0; this.beginTurn(leaderId); this.trick++;
     for (const p of this.players) {
       const count = p.id === this.landlordId ? 2 : 1;
       for (let i = 0; i < count; i++) p.skills.push(this.drawSkill());
       this.event({ type: 'drawSkills', actorId: p.id, count });
     }
     this.log('两家不出，本轮清桌。地主抽两张技能，农民各抽一张。');
-    this.timed('playing');
     if (this.players.some(p => this.excess(p) > 0)) this.beginDiscard();
   }
 
   private skill(player: Player, action: Extract<GameAction, { type: 'skill' }>): void {
     if (this.phase !== 'playing' || this.turnId !== player.id) throw new Error('只能在自己的出牌回合使用技能。');
+    if (this.skillUsed >= 1) throw new Error('每个出牌回合最多使用一张技能牌，请先正常出牌或不出。');
     const skill = player.skills.find(card => card.id === action.skillId);
     if (!skill) throw new Error('你没有这张技能牌。');
     const definition = getSkill(skill.kind);
@@ -226,7 +233,6 @@ export class Game {
       case 'wild': player.hand.push({ id: this.id('wild'), rank: 3, suit: 'W', wild: true, generated: true }); this.wildCreated++; break;
       case 'three': target!.hand.push(this.generated(3)); break;
       case 'addTwo': target!.hand.push(this.generated(), this.generated()); break;
-      case 'mutual': for (let i = 0; i < 3; i++) { player.hand.push(this.generated(undefined, true)); target!.hand.push(this.generated(undefined, true)); } break;
       case 'trade': { const received = target!.hand[this.rand(target!.hand.length)]; this.take(player, cards); this.take(target!, [received]); player.hand.push(received); target!.hand.push(...cards); this.invalidatePeeks(); break; }
       case 'shuffle': {
         const pile = this.shuffled(this.players.flatMap(p => p.hand)); let offset = 0;
@@ -236,6 +242,7 @@ export class Game {
       case 'identity': this.landlordId = player.id === this.landlordId ? target!.id : player.id; this.identityUses++; break;
       case 'reverse': this.direction = this.direction === 1 ? -1 : 1; this.log('出牌方向已反转。'); break;
     }
+    this.skillUsed++;
     this.sorted();
     this.log(`${player.name} 使用了「${definition.name}」${target ? `，目标：${target.name}` : ''}。`);
     this.event({ type: 'skill', actorId: player.id, skillKind: skill.kind, ...(target ? { targetId: target.id } : {}) });
@@ -279,8 +286,10 @@ export class Game {
         const cards = this.selected(player, action.cardIds);
         if (!cards.length) throw new Error('请先选择要出的牌。');
         const combination = classifyAgainst(cards, this.currentPlay?.combination ?? null, action.wildAs);
-        if (!combination) throw new Error('这些牌不能组成合法牌型，请检查赖子点数。');
-        if (!beats(combination, this.currentPlay?.combination ?? null)) throw new Error('这手牌压不过上一手。');
+        if (!combination) {
+          if (classifyAll(cards, action.wildAs).length) throw new Error('这手牌压不过上一手。');
+          throw new Error('这些牌不能组成合法牌型，请检查赖子点数。');
+        }
         this.take(player, cards); player.plays++;
         this.currentPlay = { playerId: id, cards: cards.map(card => ({ ...card })), combination, ...(action.wildAs ? { wildAs: { ...action.wildAs } } : {}) };
         this.lastActorId = id; this.passCount = 0; this.invalidatePeeks();
@@ -292,8 +301,8 @@ export class Game {
           if (!this.identityUses && ((this.winner === 'landlord' && this.players.filter(p => p.id !== this.landlordId).every(p => p.plays === 0)) || (this.winner === 'farmers' && this.getPlayer(this.landlordId!).plays <= 1))) {
             this.multiplier *= 2; this.log(this.winner === 'landlord' ? '春天！倍率翻倍。' : '反春天！倍率翻倍。');
           }
-          this.turnId = null; this.timed('finished'); this.log(`${player.name} 出完手牌，${this.winner === 'landlord' ? '地主' : '农民'}获胜！`);
-        } else { this.turnId = this.next(id); this.timed('playing'); }
+          this.turnId = null; this.skillUsed = 0; this.timed('finished'); this.log(`${player.name} 出完手牌，${this.winner === 'landlord' ? '地主' : '农民'}获胜！`);
+        } else this.beginTurn(this.next(id));
         break;
       }
       case 'pass':
@@ -302,7 +311,7 @@ export class Game {
         this.passCount++; this.lastActorId = id; this.log(`${player.name} 不出。`);
         this.event({ type: 'pass', actorId: id });
         if (this.passCount >= 2) this.beginSkills(this.currentPlay.playerId);
-        else { this.turnId = this.nextResponder(id); this.timed('playing'); }
+        else this.beginTurn(this.nextResponder(id));
         break;
       case 'discard': {
         if (this.phase !== 'skill_discard') throw new Error('当前不需要弃技能牌。');
@@ -354,9 +363,9 @@ export class Game {
       hand: self.hand, skills: self.skills, turnId: this.turnId, landlordId: this.landlordId,
       direction: this.direction, bottom: this.landlordId ? this.bottom : [], currentPlay: this.currentPlay,
       lastActorId: this.lastActorId, passCount: this.passCount, trick: this.trick, multiplier: this.multiplier, bidMax: this.bidMax,
-      skillActorId: null, skillOrder: [], skillUsed: 0, skillBudget: 0,
+      skillActorId: null, skillOrder: [], skillUsed: this.skillUsed, skillBudget: 1,
       mustDiscard: this.excess(self), logs: this.logs, events: this.events, privatePeek: self.peek,
-      winner: this.winner, winnerId: this.winnerId, deadline: this.deadline, paused: this.paused, version: this.version, capabilities: ['quick-chat'],
+      winner: this.winner, winnerId: this.winnerId, deadline: this.deadline, paused: this.paused, version: this.version, capabilities: ['quick-chat', 'soft-bomb', 'turn-skill-limit'],
     });
   }
 }

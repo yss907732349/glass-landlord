@@ -1,6 +1,6 @@
 {
   "name": "glass-landlord",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "private": true,
   "description": "玻璃斗地主 · 透明桌面与朋友技能局",
   "type": "module",

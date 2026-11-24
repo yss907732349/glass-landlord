@@ -73,18 +73,64 @@ test('comparison requires the same body length, while bombs and rockets override
   assert.equal(beats(shape([16, 17]), shape([16, 17])), false);
 });
 
-test('wildcard declarations support 3 to A, single 3, and never a bomb or rocket', () => {
+test('wildcard declarations support 3 to A, single 3, soft bombs and never a rocket', () => {
   const w = wild();
   assert.equal(classify([w])?.rank, 3);
   assert.equal(classify([w], { [w.id]: 4 }), null);
   assert.equal(classify([...cards([14]), w], { [w.id]: 14 })?.type, 'pair');
   assert.equal(classify([...cards([15]), w], { [w.id]: 15 }), null);
   assert.equal(classify([...cards([16]), w], { [w.id]: 17 }), null);
-  assert.equal(classify([...cards([7, 7, 7]), w], { [w.id]: 7 }), null);
+  assert.equal(classify([...cards([7, 7, 7]), w], { [w.id]: 7 })?.bombKind, 'soft');
   assert.equal(classify([...cards([3, 4, 6, 7]), w], { [w.id]: 5 })?.type, 'straight');
   assert.equal(classify([...cards([9]), w], { [w.id]: 9.5 }), null);
   assert.equal(classify(cards([3]), { fake: 3 }), null);
   assert.equal(classify(cards([3]), {})?.type, 'single');
+});
+
+test('three matching cards plus a wildcard form a soft bomb, including multiple wildcard transfers', () => {
+  for (let rank = 3; rank <= 14; rank++) {
+    for (let count = 1; count <= 3; count++) {
+      const wilds = Array.from({ length: count }, wild);
+      const selected = [...cards(Array(4 - count).fill(rank)), ...wilds];
+      const declarations = Object.fromEntries(wilds.map(card => [card.id, rank]));
+      const result = classify(selected, declarations);
+      assert.equal(result?.type, 'bomb'); assert.equal(result?.bombKind, 'soft');
+      assert.equal(result?.label, '软炸弹'); assert.equal(result?.rank, rank);
+      assert.ok(resolveWildPlays(selected, null).some(option => option.combination.bombKind === 'soft' && option.combination.rank === rank));
+    }
+  }
+  const wilds = Array.from({ length: 4 }, wild);
+  assert.equal(classify(wilds, Object.fromEntries(wilds.map(card => [card.id, 7]))), null);
+  const w = wild();
+  assert.equal(classify([...cards([15, 15, 15]), w], { [w.id]: 15 }), null);
+  assert.equal(classify([...cards([7, 7, 7, 7]), w], { [w.id]: 7 }), null);
+});
+
+test('bomb comparison ranks rocket above hard bombs above soft bombs, then compares rank within each kind', () => {
+  const soft = (rank: number) => {
+    const w = wild(); return classify([...cards([rank, rank, rank]), w], { [w.id]: rank })!;
+  };
+  const low = soft(3), high = soft(14), hard = shape([3, 3, 3, 3]);
+  assert.ok(low && high);
+  assert.equal(beats(low, shape([15])), true);
+  assert.equal(beats(high, low), true); assert.equal(beats(low, high), false);
+  assert.equal(beats(hard, high), true); assert.equal(beats(high, hard), false);
+  assert.equal(beats(soft(7), soft(7)), false);
+  assert.equal(beats(shape([16, 17]), high), true); assert.equal(beats(high, shape([16, 17])), false);
+});
+
+test('automatic choices and hints find soft bombs and lower hard bombs that beat a high soft bomb', () => {
+  const w = wild(), hand = [...cards([7, 7, 7]), w, ...cards([3])];
+  const options = resolveWildPlays(hand.slice(0, 4), shape([15]));
+  assert.equal(options.length, 1); assert.equal(options[0].combination.bombKind, 'soft');
+  assert.equal(options[0].wildAs[w.id], 7);
+  const hint = findHint(hand, shape([15])); assert.ok(hint);
+  assert.equal(classifyAgainst(hand.filter(card => hint.cardIds.includes(card.id)), shape([15]), hint.wildAs)?.bombKind, 'soft');
+  const hardHand = cards([3, 3, 3, 3, 4]);
+  const previous = options[0].combination;
+  const hardHint = findHint(hardHand, previous); assert.ok(hardHint);
+  assert.equal(classifyAgainst(hardHand.filter(card => hardHint.cardIds.includes(card.id)), previous, hardHint.wildAs)?.rank, 3);
+  assert.equal(findHint(hand, shape([3, 3, 3, 3])), null);
 });
 
 test('multiple wildcards work in ordinary combinations including four-with-wings', () => {
@@ -188,9 +234,10 @@ test('multiple wildcard identity permutations collapse but genuinely different w
   const w1 = wild(); const w2 = wild();
   const selection = [...cards([3, 3]), w2, w1];
   const choices = resolveWildPlays(selection, null);
-  assert.equal(choices.length, 11);
-  assert.ok(choices.every(option => option.combination.type === 'triple_single' && option.combination.rank === 3));
-  assert.deepEqual(choices.map(option => option.effectiveRanks.at(-1)), Array.from({ length: 11 }, (_, i) => i + 4));
+  assert.equal(choices.length, 12);
+  assert.equal(choices.filter(option => option.combination.bombKind === 'soft').length, 1);
+  assert.ok(choices.every(option => ['triple_single', 'bomb'].includes(option.combination.type) && option.combination.rank === 3));
+  assert.deepEqual(choices.filter(option => option.combination.type === 'triple_single').map(option => option.effectiveRanks.at(-1)), Array.from({ length: 11 }, (_, i) => i + 4));
   const keys = choices.map(option => `${option.combination.type}:${option.effectiveRanks.join(',')}`);
   assert.equal(new Set(keys).size, keys.length);
   const wildcardIds = [w1.id, w2.id].sort((a, b) => a.localeCompare(b));

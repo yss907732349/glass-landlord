@@ -21,8 +21,8 @@ const report = { checks: [], errors: [], sockets: [], profile, stderr: [] };
 try {
   const response = await fetch(`${expectedServer}/health`, { signal: AbortSignal.timeout(45000) });
   report.health = { status: response.status, body: await response.json() };
-  if (!response.ok || report.health.body.protocol !== 'turn-skills-v2' || !report.health.body.capabilities?.includes('quick-chat')) {
-    report.blocked = 'Public service has not deployed turn-skills-v2 with quick-chat capability; no public room or packaged online game was started.';
+  if (!response.ok || report.health.body.protocol !== 'turn-skills-v2' || !['quick-chat', 'soft-bomb', 'turn-skill-limit'].every(capability => report.health.body.capabilities?.includes(capability))) {
+    report.blocked = 'Public service has not deployed soft-bomb and turn-skill-limit with quick-chat; no public room or packaged online game was started.';
   }
 } catch (error) { report.blocked = `Public service health check failed: ${error.message}`; }
 if (report.blocked) {

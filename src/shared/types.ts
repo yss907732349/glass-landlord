@@ -1,10 +1,10 @@
 export interface Card { id: string; rank: number; suit: 'S' | 'H' | 'C' | 'D' | 'J' | 'W'; wild?: boolean; generated?: boolean }
-export type SkillKind = 'steal' | 'gift' | 'peek' | 'wild' | 'three' | 'trade' | 'shuffle' | 'mutual' | 'identity' | 'addTwo' | 'reverse';
+export type SkillKind = 'steal' | 'gift' | 'peek' | 'wild' | 'three' | 'trade' | 'shuffle' | 'identity' | 'addTwo' | 'reverse';
 export interface SkillCard { id: string; kind: SkillKind }
 export interface SkillDefinition { kind: SkillKind; name: string; description: string; weight: number; target: boolean; select: number; tone: 'normal' | 'rare' | 'epic' }
 export type Phase = 'lobby' | 'bidding' | 'playing' | 'skill_discard' | 'skill_use' | 'finished';
 export interface PlayerView { id: string; name: string; connected: boolean; ready: boolean; cardCount: number; skillCount: number; role: 'landlord' | 'farmer' | null; bid: number | null }
-export interface Combination { type: string; rank: number; length: number; size: number; label: string }
+export interface Combination { type: string; rank: number; length: number; size: number; label: string; bombKind?: 'soft' | 'hard' }
 export interface PlayedCards { playerId: string; cards: Card[]; combination: Combination; wildAs?: Record<string, number> }
 export interface GameEvent {
   id: string; type: 'drawSkills' | 'discardSkills' | 'skill' | 'play' | 'pass' | 'chat';

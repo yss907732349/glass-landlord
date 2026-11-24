@@ -7,7 +7,7 @@ import { readyBots, runBotTurn } from '../server/bots.ts';
 import { Game } from '../src/shared/game.ts';
 import { classify } from '../src/shared/rules.ts';
 import { getSkill } from '../src/shared/skills.ts';
-import type { ClientMessage, GameAction, GameView, ServerMessage } from '../src/shared/types.ts';
+import type { Card, ClientMessage, GameAction, GameView, ServerMessage } from '../src/shared/types.ts';
 
 class Client {
   socket: WebSocket;
@@ -129,7 +129,12 @@ test('real websocket room: password, capacity, private hands, turns, skills and 
   assert.equal(used.turnId, host.playerId);
   assert.ok(!used.skills.some(skill => skill.id === drawnSkill.id));
   assert.equal(used.skillActorId, null);
-  assert.equal(used.skillBudget, 0);
+  assert.equal(used.skillBudget, 1); assert.equal(used.skillUsed, 1);
+  const remainingSkill = used.skills[0]; assert.ok(remainingSkill);
+  const beforeSecond = a.messages.length;
+  a.send({ type: 'action', action: { type: 'skill', skillId: remainingSkill.id, targetId: friend.playerId } });
+  assert.match((await a.receive(isError, beforeSecond)).message, /最多使用一张/);
+  assert.equal(a.state.version, used.version); assert.deepEqual(a.state.skills, used.skills);
   const continued = await a.act({ type: 'play', cardIds: [a.state.hand.find(card => !card.wild)!.id] });
   assert.equal(continued.currentPlay?.playerId, host.playerId);
   assert.notEqual(continued.turnId, host.playerId);
@@ -266,7 +271,7 @@ test('health endpoint and websocket origin checks', async t => {
   assert.equal(health.ok, true);
   assert.match(health.version, /^\d+\.\d+\.\d+/);
   assert.equal(health.protocol, 'turn-skills-v2');
-  assert.deepEqual(health.capabilities, ['quick-chat']);
+  assert.deepEqual(health.capabilities, ['quick-chat', 'soft-bomb', 'turn-skill-limit']);
   assert.equal((await fetch(`http://127.0.0.1:${app.port}/src/shared/game.ts`)).status, 404);
   const socket = new WebSocket(`ws://127.0.0.1:${app.port}/ws`, { origin: 'https://untrusted.example' });
   const status = await new Promise<number>((resolve, reject) => {
@@ -347,15 +352,17 @@ test('farmer bot yields to a teammate close to winning and bots ready after rest
   assert.equal(game.phase, 'bidding');
 });
 
-test('bot uses at most two skills before playing, then can use skills again next turn', () => {
+test('bot uses one skill before playing, then can use one skill again on its next turn', () => {
   const game = botGame();
   const bot = game.players.find(player => player.id === 'bot-a')!;
   game.landlordId = bot.id;
   bot.skills = [{ id: 'three-a', kind: 'three' }, { id: 'three-b', kind: 'three' }, { id: 'three-c', kind: 'three' }];
   const cards = bot.hand.length;
-  for (let i = 0; i < 3 && game.turnId === bot.id; i++) runBotTurn(game, bot.id);
+  runBotTurn(game, bot.id);
+  assert.equal(game.turnId, bot.id); assert.equal(game.skillUsed, 1); assert.equal(bot.skills.length, 2);
+  runBotTurn(game, bot.id);
   assert.notEqual(game.turnId, bot.id);
-  assert.ok(bot.skills.length >= 1);
+  assert.equal(bot.skills.length, 2);
   assert.ok(bot.hand.length < cards);
   game.turnId = bot.id;
   game.currentPlay = null;
@@ -363,4 +370,67 @@ test('bot uses at most two skills before playing, then can use skills again next
   runBotTurn(game, bot.id);
   assert.equal(bot.skills.length, remaining - 1);
   assert.equal(game.turnId, bot.id);
+});
+
+test('three websocket clients receive a wildcard soft bomb and enforce hard-bomb priority on the server', async t => {
+  const app = await createGameServer({ port: 0, host: '127.0.0.1' });
+  const clients = Array.from({ length: 3 }, () => new Client(`ws://127.0.0.1:${app.port}/ws`));
+  const originalAddPlayer = Game.prototype.addPlayer;
+  let fixture: Game | undefined;
+  Game.prototype.addPlayer = function (id, name) {
+    originalAddPlayer.call(this, id, name);
+    if (name === '软炸联机房主') fixture = this;
+  };
+  t.after(async () => {
+    Game.prototype.addPlayer = originalAddPlayer;
+    await Promise.all(clients.map(client => client.close()));
+    await app.close();
+  });
+  const [a, b, c] = clients;
+  await Promise.all(clients.map(client => client.opened()));
+  a.send({ type: 'create', name: '软炸联机房主', password: 'soft-bomb-room' });
+  const host = await a.receive(isJoined); await a.receive(isState);
+  b.send({ type: 'join', name: '硬炸玩家', code: host.code, password: 'soft-bomb-room' });
+  const friend = await b.receive(isJoined); await b.receive(isState);
+  c.send({ type: 'join', name: '大软炸玩家', code: host.code, password: 'soft-bomb-room' });
+  const third = await c.receive(isJoined); await c.receive(isState);
+  for (const client of clients) await client.receive((item): item is Extract<ServerMessage, { type: 'state' }> => item.type === 'state' && item.state.players.length === 3);
+  assert.ok(fixture);
+  const game = fixture;
+  const natural = (id: string, rank: number): Card => ({ id, rank, suit: 'S' });
+  const wildcard = (id: string): Card => ({ id, rank: 3, suit: 'W', wild: true, generated: true });
+  const aWild = wildcard('wire-soft-wild'), cWild = wildcard('wire-high-soft-wild');
+  const aCards = [natural('wire-five-1', 5), natural('wire-five-2', 5), natural('wire-five-3', 5), aWild];
+  const bCards = Array.from({ length: 4 }, (_, index) => natural(`wire-three-${index}`, 3));
+  const cCards = [natural('wire-ace-1', 14), natural('wire-ace-2', 14), natural('wire-ace-3', 14), cWild];
+  game.phase = 'playing'; game.turnId = host.playerId; game.landlordId = host.playerId;
+  game.deadline = Date.now() + 45_000;
+  game.players.find(player => player.id === host.playerId)!.hand = [...aCards, natural('wire-a-left', 9)];
+  game.players.find(player => player.id === friend.playerId)!.hand = [...bCards, natural('wire-b-left', 8)];
+  game.players.find(player => player.id === third.playerId)!.hand = [...cCards, natural('wire-c-left', 10)];
+  const initialized = await a.act({ type: 'chat', phraseId: 0 });
+  for (const client of clients) await client.receive((item): item is Extract<ServerMessage, { type: 'state' }> => item.type === 'state' && item.state.version >= initialized.version);
+  const soft = await a.act({ type: 'play', cardIds: aCards.map(card => card.id), wildAs: { [aWild.id]: 5 } });
+  assert.equal(soft.currentPlay?.combination.type, 'bomb');
+  assert.equal(soft.currentPlay?.combination.bombKind, 'soft');
+  assert.equal(soft.currentPlay?.combination.label, '软炸弹');
+  assert.equal(soft.multiplier, 2);
+  for (const client of clients) {
+    const broadcast = await client.receive((item): item is Extract<ServerMessage, { type: 'state' }> => item.type === 'state' && item.state.version >= soft.version);
+    assert.deepEqual(broadcast.state.currentPlay, soft.currentPlay);
+    assert.ok(broadcast.state.capabilities?.includes('soft-bomb'));
+    assert.ok(broadcast.state.players.every(player => !('hand' in player)));
+  }
+  const hard = await b.act({ type: 'play', cardIds: bCards.map(card => card.id) });
+  assert.equal(hard.currentPlay?.combination.rank, 3);
+  assert.equal(hard.currentPlay?.combination.type, 'bomb');
+  assert.notEqual(hard.currentPlay?.combination.bombKind, 'soft');
+  assert.equal(hard.multiplier, 4);
+  await c.receive((item): item is Extract<ServerMessage, { type: 'state' }> => item.type === 'state' && item.state.version >= hard.version);
+  const before = c.state;
+  await assert.rejects(c.act({ type: 'play', cardIds: cCards.map(card => card.id), wildAs: { [cWild.id]: 14 } }), /牌|压不过/);
+  assert.deepEqual(c.state, before);
+  assert.equal(game.version, hard.version);
+  assert.equal(game.multiplier, 4);
+  assert.equal(game.players.find(player => player.id === third.playerId)!.hand.length, 5);
 });

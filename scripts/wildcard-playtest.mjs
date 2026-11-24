@@ -151,6 +151,31 @@ try {
   assert.equal(Object.keys(action.wildAs).length, multiple.filter(card => card.wild).length);
   checks.push('two wildcard identities receive automatic 6 and 7 declarations and are accepted by Game');
 
+  const bomb = await readyFixture('soft-bomb-choice', [7, 7, 7, 'W']);
+  before = count(); await clickPlay();
+  await page.getByRole('button', { name: /^软炸弹 7/ }).waitFor();
+  assert.equal(count(), before, 'a bomb versus three-with-one choice is not guessed');
+  await page.getByRole('button', { name: /^软炸弹 7/ }).click();
+  action = await acceptedSince(before);
+  assert.equal(action.wildAs[bomb.find(card => card.wild).id], 7);
+  assert.equal(fixture.currentPlay.combination.bombKind, 'soft');
+  assert.equal(fixture.multiplier, 6);
+  await screenshot('wildcard-soft-bomb.png');
+  checks.push('three sevens plus wildcard offer a soft bomb and the chosen bomb doubles the real Game multiplier');
+
+  const forcedBomb = await readyFixture('soft-bomb-automatic', [3, 3, 3, 'W'], [15]);
+  before = count(); await clickPlay(); action = await acceptedSince(before);
+  assert.equal(action.wildAs[forcedBomb.find(card => card.wild).id], 3);
+  assert.equal(fixture.currentPlay.combination.bombKind, 'soft');
+  assert.equal(await page.locator('.wild-options').count(), 0);
+  checks.push('three threes plus wildcard automatically bomb a single two without a manual declaration');
+
+  await readyFixture('soft-cannot-beat-hard', [14, 14, 14, 'W'], [3, 3, 3, 3]);
+  before = count(); await clickPlay();
+  await page.getByRole('status').filter({ hasText: '这些牌无法组成能出的牌型' }).waitFor();
+  assert.equal(count(), before);
+  checks.push('a soft ace bomb cannot beat a hard three bomb or send an invalid play request');
+
   const changed = await readyFixture('selection-change', [4, 5, 6, 7, 'W']);
   before = count(); await clickPlay(); await page.locator('.wild-options').waitFor({ state: 'visible' });
   await page.locator(`[data-card-id="${changed[0].id}"]`).click({ position: { x: 5, y: 45 } });

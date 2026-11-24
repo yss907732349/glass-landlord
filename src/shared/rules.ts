@@ -47,7 +47,9 @@ export function classifyAll(cards: Card[], wildAs: Record<string, number> = {}):
   if (keys.length === 1 && ranks[0] <= 15) {
     if (n === 2) push('pair', ranks[0]);
     if (n === 3) push('triple', ranks[0]);
-    if (n === 4 && !hasWild) push('bomb', ranks[0]);
+    if (n === 4 && (!hasWild || cards.some(card => !card.wild))) {
+      result.push({ ...combination('bomb', ranks[0], n), ...(hasWild ? { bombKind: 'soft' as const, label: '软炸弹' } : {}) });
+    }
   }
   if (n === 4 && keys.length === 2) {
     const core = keys.find(rank => counts.get(rank) === 3 && rank <= 15);
@@ -82,8 +84,7 @@ export function classifyAll(cards: Card[], wildAs: Record<string, number> = {}):
   if (n === 6 || n === 8) {
     for (const core of keys.filter(rank => rank <= 15 && counts.get(rank) === 4)) {
       const wings = keys.filter(rank => rank !== core);
-      // Any play containing a wildcard cannot count a wildcard-containing
-      // quartet as a bomb, but four-with-wings is an ordinary combination.
+      // Adding wings makes this an ordinary combination, even with wildcards.
       if (n === 6 && wings.reduce((sum, rank) => sum + counts.get(rank)!, 0) === 2) push('four_two', core);
       if (n === 8 && wings.length === 2 && wings.every(rank => rank <= 15 && counts.get(rank) === 2)) push('four_pairs', core);
     }
@@ -99,7 +100,12 @@ export function beats(next: Combination, previous: Combination | null): boolean 
   if (!previous) return true;
   if (previous.type === 'rocket') return false;
   if (next.type === 'rocket') return true;
-  if (next.type === 'bomb') return previous.type !== 'bomb' || next.rank > previous.rank;
+  if (next.type === 'bomb') {
+    if (previous.type !== 'bomb') return true;
+    const nextSoft = next.bombKind === 'soft', previousSoft = previous.bombKind === 'soft';
+    if (nextSoft !== previousSoft) return !nextSoft;
+    return next.rank > previous.rank;
+  }
   if (previous.type === 'bomb') return false;
   return next.type === previous.type && next.size === previous.size && next.length === previous.length && next.rank > previous.rank;
 }
@@ -242,9 +248,15 @@ export function findHint(hand: Card[], previous: Combination | null): { cardIds:
       }
     }
   }
-  for (let rank = previous?.type === 'bomb' ? previous.rank + 1 : 3; rank <= 15; rank++) {
-    const found = pattern([rank], 4, 0, 1, false);
-    if (found) return found;
+  // A lower hard bomb beats any soft bomb; let beats() check the hierarchy.
+  // Prefer a soft bomb over spending a hard bomb when an ordinary reply fails.
+  for (const allowWild of [true, false]) {
+    for (let rank = 3; rank <= 15; rank++) {
+      const naturals = natural.get(rank)?.length ?? 0;
+      if (allowWild && (naturals === 0 || naturals >= 4)) continue;
+      const found = pattern([rank], 4, 0, 1, allowWild);
+      if (found) return found;
+    }
   }
   const small = natural.get(16)?.[0];
   const big = natural.get(17)?.[0];

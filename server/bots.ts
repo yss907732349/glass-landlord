@@ -3,19 +3,8 @@ import { findHint } from '../src/shared/rules.ts';
 import { getSkill } from '../src/shared/skills.ts';
 import type { Game } from '../src/shared/game.ts';
 
-const turnSkills = new WeakMap<Game, Map<string, { used: number; maximum: number }>>();
-
-function skillsUsed(game: Game, id: string) {
-  let turns = turnSkills.get(game);
-  if (!turns) { turns = new Map(); turnSkills.set(game, turns); }
-  let turn = turns.get(id);
-  if (!turn) { turn = { used: 0, maximum: randomInt(1, 3) }; turns.set(id, turn); }
-  return turn;
-}
-
 export function readyBots(game: Game): void {
   if (game.phase !== 'lobby') return;
-  turnSkills.delete(game);
   for (const bot of game.players.filter(player => player.id.startsWith('bot-'))) game.act(bot.id, { type: 'ready', ready: true });
 }
 
@@ -28,15 +17,13 @@ export function runBotTurn(game: Game, id: string): void {
     game.act(id, { type: 'bid', value: view.bidMax === 0 ? 1 : 0 });
   } else if (view.phase === 'playing') {
     if (view.turnId !== id) return;
-    const turn = skillsUsed(game, id);
-    if (turn.used < turn.maximum && trySkill(game, id)) { turn.used++; return; }
+    if (view.skillUsed < view.skillBudget && trySkill(game, id)) return;
     const hint = findHint(view.hand, view.currentPlay?.combination ?? null);
     const self = view.players.find(player => player.id === id)!;
     const last = view.players.find(player => player.id === view.currentPlay?.playerId);
     const yieldToFriend = self.role === 'farmer' && last?.role === 'farmer'
       && hint?.cardIds.length !== view.hand.length && (last.cardCount <= 5 || randomInt(100) < 65);
     game.act(id, hint && !yieldToFriend ? { type: 'play', ...hint } : { type: 'pass' });
-    turnSkills.get(game)?.delete(id);
   } else if (view.phase === 'skill_discard') {
     game.act(id, { type: 'discard', skillIds: view.skills.slice(0, view.mustDiscard).map(skill => skill.id) });
   }
@@ -51,7 +38,7 @@ function trySkill(game: Game, id: string): boolean {
       return enemyB - enemyA || a.cardCount - b.cardCount;
     });
     const giftCards = view.hand.slice().sort((a, b) => Number(!!a.wild) - Number(!!b.wild) || a.rank - b.rank);
-    const priorities: Record<string, number> = { addTwo: 10, trade: 9, three: 8, wild: 7, steal: 6, mutual: 5, reverse: 4, peek: 3, shuffle: 2, gift: 1, identity: 0 };
+    const priorities: Record<string, number> = { addTwo: 10, trade: 9, three: 8, wild: 7, steal: 6, reverse: 4, peek: 3, shuffle: 2, gift: 1, identity: 0 };
     const skills = view.skills.slice().sort((a, b) => priorities[b.kind] - priorities[a.kind]);
     for (const skill of skills) {
       const definition = getSkill(skill.kind);
