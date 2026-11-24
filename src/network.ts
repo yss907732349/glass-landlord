@@ -1,4 +1,5 @@
 import type { ClientMessage, GameAction, GameView, ServerMessage } from './shared/types.ts';
+import { DEFAULT_ROOM_SERVER } from './config.ts';
 export type Session = { code: string; token: string; playerId: string; endpoint: string };
 const sessionStore = () => window.desktop ? localStorage : sessionStorage;
 export class RoomConnection {
@@ -11,7 +12,7 @@ export class RoomConnection {
   constructor(private callbacks: { state: (state: GameView) => void; status: (text: string, busy: boolean) => void; joined: (s: Session) => void; left: () => void }) {}
   static endpoint(address: string): string {
     const fallback = location.protocol === 'file:' ? 'http://127.0.0.1:4317' : location.origin;
-    const url = new URL(address || import.meta.env.VITE_ROOM_SERVER || fallback);
+    const url = new URL(address || DEFAULT_ROOM_SERVER || fallback);
     if (!['http:', 'https:', 'ws:', 'wss:'].includes(url.protocol) || url.username || url.password || url.search || url.hash) throw new Error('请填写完整的房间服务地址，例如 https://你的服务.onrender.com');
     if (location.protocol === 'https:' && ['http:', 'ws:'].includes(url.protocol)) throw new Error('这个页面需要连接 https 房间服务。');
     url.protocol = ['https:', 'wss:'].includes(url.protocol) ? 'wss:' : 'ws:';
@@ -35,6 +36,7 @@ export class RoomConnection {
       if (generation !== this.generation) return;
       let message: ServerMessage; try { message = JSON.parse(event.data); } catch { return; }
       if (message.type === 'joined') {
+        if (request.type === 'resume') window.dispatchEvent(new Event('glass-effects-resume'));
         clearTimeout(timeout); this.reconnectUntil = 0; accepted = true;
         this.session = { code: message.code, token: message.token, playerId: message.playerId, endpoint };
         sessionStore().setItem('glass-room', JSON.stringify(this.session)); this.callbacks.joined(this.session); this.callbacks.status('已连接', false);

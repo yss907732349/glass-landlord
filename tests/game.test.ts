@@ -14,12 +14,12 @@ function room(): Game {
 }
 function playing(): Game {
   const game = room(); game.phase = 'playing'; game.landlordId = 'a'; game.turnId = 'a';
+  game.deadline = Date.now() + 45_000;
   for (const player of game.players) player.hand = [card(3), card(4), card(5), card(6), card(7), card(8)];
   return game;
 }
 function stage(kind: SkillKind, actor = 'a'): Game {
-  const game = playing(); game.phase = 'skill_use'; game.skillOrder = [actor, ...['a', 'b', 'c'].filter(id => id !== actor)];
-  game.skillIndex = 0; game.skillBudgets = { a: 2, b: 1, c: 1 }; game.skillUses = { a: 0, b: 0, c: 0 };
+  const game = playing(); game.turnId = actor;
   game.players.find(p => p.id === actor)!.skills = [{ id: 'chosen', kind }];
   return game;
 }
@@ -56,9 +56,8 @@ test('two passes clear the table, draw two landlord skills and one per farmer; i
   game.act('b', { type: 'pass' }); game.act('c', { type: 'pass' });
   assert.equal(game.currentPlay, null); assert.equal(game.turnId, 'a'); assert.equal(game.trick, 2);
   assert.equal(game.players[0].skills.length, 3); assert.equal(game.players[1].skills.length, 2); assert.equal(game.players[2].skills.length, 1);
-  assert.equal(game.phase, 'skill_use');
-  for (const id of ['a', 'b', 'c']) game.act(id, { type: 'skillEnd' });
   assert.equal(game.phase, 'playing'); assert.equal(game.players[0].skills[0].id, 'stored-a');
+  assert.equal(game.turnId, 'a'); assert.equal(game.view('a').skillActorId, null);
 });
 
 test('overflow is mandatory before anyone can cast; landlord keeps three, farmer two', () => {
@@ -67,10 +66,10 @@ test('overflow is mandatory before anyone can cast; landlord keeps three, farmer
   game.players[1].skills = ['u', 'v'].map(id => ({ id, kind: 'peek' as const }));
   game.act('a', { type: 'play', cardIds: [game.players[0].hand[0].id] }); game.act('b', { type: 'pass' }); game.act('c', { type: 'pass' });
   assert.equal(game.phase, 'skill_discard'); assert.equal(game.view('a').mustDiscard, 2); assert.equal(game.view('b').mustDiscard, 1);
-  assert.throws(() => game.act('a', { type: 'skill', skillId: 'x', targetId: 'b' }), /还没轮到/);
+  assert.throws(() => game.act('a', { type: 'skill', skillId: 'x', targetId: 'b' }), /自己的出牌回合/);
   assert.throws(() => game.act('a', { type: 'discard', skillIds: ['x'] }), /2张/);
   game.act('a', { type: 'discard', skillIds: ['x', 'y'] }); assert.equal(game.phase, 'skill_discard');
-  game.act('b', { type: 'discard', skillIds: ['u'] }); assert.equal(game.phase, 'skill_use');
+  game.act('b', { type: 'discard', skillIds: ['u'] }); assert.equal(game.phase, 'playing'); assert.equal(game.turnId, 'a');
   assert.equal(game.players[0].skills.length, 3); assert.equal(game.players[1].skills.length, 2);
 });
 
@@ -120,27 +119,98 @@ test('shuffle preserves each hand count and all physical card identities, cleari
   assert.deepEqual(game.players.map(p => p.hand.length), counts); assert.deepEqual(game.players.flatMap(p => p.hand).map(c => c.id).sort(), ids); assert.equal(game.view('a').privatePeek.length, 0); assert.equal(game.shuffleUses, 1);
 });
 
-test('direction reversal waits until skill stage ends and two reversals cancel', () => {
-  const game = stage('reverse'); game.act('a', { type: 'skill', skillId: 'chosen' }); assert.equal(game.direction, 1);
-  game.act('b', { type: 'skillEnd' }); game.act('c', { type: 'skillEnd' }); assert.equal(game.direction, -1); assert.equal(game.turnId, 'a');
+test('direction reversal is immediate without spending the turn, and two reversals cancel', () => {
+  const game = stage('reverse'); const deadline = game.deadline;
+  game.act('a', { type: 'skill', skillId: 'chosen' }); assert.equal(game.direction, -1); assert.equal(game.turnId, 'a'); assert.equal(game.deadline, deadline);
   game.act('a', { type: 'play', cardIds: [game.players[0].hand[0].id] }); assert.equal(game.turnId, 'c');
   const double = stage('reverse'); double.players[0].skills.push({ id: 'again', kind: 'reverse' });
   double.act('a', { type: 'skill', skillId: 'chosen' }); double.act('a', { type: 'skill', skillId: 'again' });
-  double.act('b', { type: 'skillEnd' }); double.act('c', { type: 'skillEnd' }); assert.equal(double.direction, 1);
+  assert.equal(double.direction, 1); assert.equal(double.turnId, 'a'); assert.equal(double.phase, 'playing');
 });
 
-test('identity exchange preserves this-stage budget and forces old landlord down to two skills', () => {
-  const game = stage('identity', 'b'); game.players[0].skills = ['x', 'y', 'z'].map(id => ({ id, kind: 'peek' as const }));
+test('skills may chain on own playing turn without spending the play or resetting its deadline', () => {
+  const game = stage('peek');
+  game.players[0].skills.push({ id: 'two', kind: 'three' }, { id: 'three', kind: 'reverse' });
+  game.players[1].skills = [{ id: 'opponent', kind: 'three' }];
+  const before = JSON.stringify(game.players.map(p => game.view(p.id)));
+  assert.throws(() => game.act('b', { type: 'skill', skillId: 'opponent', targetId: 'a' }), /自己的出牌回合/);
+  assert.equal(JSON.stringify(game.players.map(p => game.view(p.id))), before);
+  const deadline = game.deadline;
+  game.act('a', { type: 'skill', skillId: 'chosen', targetId: 'b' });
+  game.act('a', { type: 'skill', skillId: 'two', targetId: 'b' });
+  game.act('a', { type: 'skill', skillId: 'three' });
+  assert.equal(game.players[0].skills.length, 0); assert.equal(game.turnId, 'a'); assert.equal(game.deadline, deadline);
+  assert.throws(() => game.act('a', { type: 'skillEnd' }), /无需结束技能阶段/);
+  game.act('a', { type: 'play', cardIds: [game.players[0].hand[0].id] });
+  assert.equal(game.turnId, 'c');
+});
+
+test('reversed follow order skips the current high-hand owner until both opponents respond', () => {
+  const game = playing(); game.players[1].skills = [{ id: 'reverse-b', kind: 'reverse' }];
+  game.act('a', { type: 'play', cardIds: [game.players[0].hand[0].id] });
+  game.act('b', { type: 'skill', skillId: 'reverse-b' }); game.act('b', { type: 'pass' });
+  assert.equal(game.turnId, 'c'); assert.equal(game.passCount, 1); assert.equal(game.currentPlay?.playerId, 'a');
+  game.act('c', { type: 'pass' });
+  assert.equal(game.turnId, 'a'); assert.equal(game.currentPlay, null); assert.equal(game.passCount, 0);
+
+  const overtaking = playing(); overtaking.players[1].skills = [{ id: 'reverse-b', kind: 'reverse' }];
+  overtaking.act('a', { type: 'play', cardIds: [overtaking.players[0].hand[0].id] });
+  overtaking.act('b', { type: 'skill', skillId: 'reverse-b' });
+  overtaking.act('b', { type: 'play', cardIds: [overtaking.players[1].hand[1].id] });
+  assert.equal(overtaking.currentPlay?.playerId, 'b'); assert.equal(overtaking.turnId, 'a');
+});
+
+test('identity exchange forces old landlord discard and resumes the exact following turn and table', () => {
+  const game = stage('identity', 'c'); game.players[0].skills = ['x', 'y', 'z'].map(id => ({ id, kind: 'peek' as const }));
+  game.turnId = 'a';
+  game.act('a', { type: 'play', cardIds: [game.players[0].hand[0].id] });
+  game.act('b', { type: 'pass' });
+  const previousPlay = structuredClone(game.currentPlay);
   const counts = game.players.map(p => p.hand.length);
-  game.act('b', { type: 'skill', skillId: 'chosen', targetId: 'a' });
-  assert.equal(game.landlordId, 'b'); assert.equal(game.identityUses, 1); assert.equal(game.phase, 'skill_discard'); assert.equal(game.view('a').mustDiscard, 1);
-  assert.equal(game.skillBudgets.a, 2); assert.equal(game.skillBudgets.b, 1); assert.deepEqual(game.players.map(p => p.hand.length), counts);
-  game.act('a', { type: 'discard', skillIds: ['x'] }); assert.equal(game.phase, 'skill_use'); assert.equal(game.view('a').skillActorId, 'a'); assert.equal(game.turnId, 'a');
-  assert.equal(game.view('a').skillBudget, 2);
-  game.act('a', { type: 'skill', skillId: 'y', targetId: 'b' });
-  assert.equal(game.view('a').skillActorId, 'a'); assert.equal(game.view('a').skillUsed, 1);
-  game.act('a', { type: 'skill', skillId: 'z', targetId: 'c' });
-  assert.equal(game.view('a').skillActorId, 'c');
+  game.act('c', { type: 'skill', skillId: 'chosen', targetId: 'a' });
+  assert.equal(game.landlordId, 'c'); assert.equal(game.identityUses, 1); assert.equal(game.phase, 'skill_discard'); assert.equal(game.view('a').mustDiscard, 1);
+  assert.deepEqual(game.players.map(p => p.hand.length), counts);
+  game.act('a', { type: 'discard', skillIds: ['x'] });
+  assert.equal(game.phase, 'playing'); assert.equal(game.turnId, 'c'); assert.equal(game.passCount, 1); assert.deepEqual(game.currentPlay, previousPlay);
+  assert.equal(game.view('c').skills.length, 0);
+  game.act('c', { type: 'play', cardIds: [game.players[2].hand[1].id] });
+  assert.equal(game.turnId, 'a'); assert.equal(game.passCount, 0);
+});
+
+test('mid-turn identity overflow pauses the original play deadline until discarding completes', () => {
+  let now = 1000;
+  const game = new Game('discard-clock', { now: () => now, random: () => 0.25 });
+  for (const id of ['a', 'b', 'c']) game.addPlayer(id, id);
+  game.phase = 'playing'; game.landlordId = 'a'; game.turnId = 'b'; game.deadline = 46_000;
+  for (const p of game.players) p.hand = [card(3), card(4), card(5)];
+  game.players[0].skills = ['x', 'y', 'z'].map(id => ({ id, kind: 'peek' as const }));
+  game.players[1].skills = [{ id: 'exchange', kind: 'identity' }];
+  now = 2000; game.act('b', { type: 'skill', skillId: 'exchange', targetId: 'a' });
+  assert.equal(game.phase, 'skill_discard'); assert.equal(game.deadline, 32_000);
+  now = 12_000; game.act('a', { type: 'discard', skillIds: ['x'] });
+  assert.equal(game.phase, 'playing'); assert.equal(game.turnId, 'b'); assert.equal(game.deadline, 56_000);
+});
+
+test('public events describe draws, discards, skills and plays without exposing private card data', () => {
+  const game = playing(); game.players[0].skills = ['x', 'y', 'z'].map(id => ({ id, kind: 'peek' as const }));
+  game.act('a', { type: 'play', cardIds: [game.players[0].hand[0].id] });
+  game.act('b', { type: 'pass' }); game.act('c', { type: 'pass' });
+  assert.deepEqual(game.events.filter(event => event.type === 'drawSkills').map(event => [event.actorId, event.count]), [['a', 2], ['b', 1], ['c', 1]]);
+  game.act('a', { type: 'discard', skillIds: ['x', 'y'] });
+  assert.equal(game.events.at(-1)?.type, 'discardSkills'); assert.equal(game.events.at(-1)?.count, 2);
+  game.act('a', { type: 'skill', skillId: 'z', targetId: 'b' });
+  assert.equal(game.events.at(-1)?.type, 'skill'); assert.equal(game.events.at(-1)?.targetId, 'b'); assert.equal(game.events.at(-1)?.skillKind, 'peek');
+  const allowed = new Set(['id', 'type', 'actorId', 'targetId', 'skillKind', 'count', 'at']);
+  assert.ok(game.events.every(event => Object.keys(event).every(key => allowed.has(key))));
+  const view = game.view('b'); view.events[0].actorId = 'tampered'; assert.notEqual(game.events[0].actorId, 'tampered');
+  const deadline = game.deadline;
+  for (let i = 0; i < 25; i++) {
+    game.players[0].skills = [{ id: `peek-${i}`, kind: 'peek' }];
+    game.act('a', { type: 'skill', skillId: `peek-${i}`, targetId: 'b' });
+  }
+  assert.equal(game.events.length, 20); assert.equal(new Set(game.events.map(event => event.id)).size, 20); assert.equal(game.deadline, deadline);
+  game.players[0].hand = [card(3)]; game.act('a', { type: 'play', cardIds: [game.players[0].hand[0].id] }); game.act('a', { type: 'restart' });
+  assert.deepEqual(game.events, []);
 });
 
 test('malformed and unauthorized actions are atomic and do not consume cards, skills or turn budgets', () => {
@@ -194,24 +264,6 @@ test('seeded long games with chaotic, cooperative and stockpiling strategies ter
       const snapshot = () => JSON.stringify(game.players.map(p => game.view(p.id)));
       if (game.phase === 'playing') {
         const actor = game.players.find(p => p.id === game.turnId)!;
-        const hint = findHint(actor.hand, game.currentPlay?.combination ?? null);
-        const canPass = game.currentPlay !== null;
-        const passForTeammate = seed % 3 === 1 && game.currentPlay?.playerId !== game.landlordId && actor.id !== game.landlordId;
-        if (canPass && (!hint || passForTeammate || random() < 0.15)) game.act(actor.id, { type: 'pass' });
-        else {
-          assert.ok(hint, `seed ${seed}: free leader must have a legal hint`);
-          game.act(actor.id, { type: 'play', ...hint });
-          for (const id of hint.cardIds) { assert.equal(played.has(id), false, `seed ${seed}: card played twice`); played.add(id); }
-        }
-      } else if (game.phase === 'skill_discard') {
-        const actor = game.players.find(p => game.view(p.id).mustDiscard > 0)!;
-        assert.ok(actor, `seed ${seed}: discard phase must have an overflowing player`);
-        const amount = game.view(actor.id).mustDiscard;
-        const selected = [...actor.skills].sort(() => random() - 0.5).slice(0, amount).map(s => s.id);
-        game.act(actor.id, { type: 'discard', skillIds: selected });
-      } else if (game.phase === 'skill_use') {
-        const actor = game.players.find(p => p.id === game.skillOrder[game.skillIndex])!;
-        assert.ok(actor, `seed ${seed}: skill stage must have an actor`);
         let used = false;
         if (!(seed % 3 === 2 && random() < 0.35)) {
           const skills = [...actor.skills].sort(() => random() - 0.5);
@@ -227,7 +279,23 @@ test('seeded long games with chaotic, cooperative and stockpiling strategies ter
             if (used) break;
           }
         }
-        if (!used) game.act(actor.id, { type: 'skillEnd' });
+        if (!used) {
+          const hint = findHint(actor.hand, game.currentPlay?.combination ?? null);
+          const canPass = game.currentPlay !== null;
+          const passForTeammate = seed % 3 === 1 && game.currentPlay?.playerId !== game.landlordId && actor.id !== game.landlordId;
+          if (canPass && (!hint || passForTeammate || random() < 0.15)) game.act(actor.id, { type: 'pass' });
+          else {
+            assert.ok(hint, `seed ${seed}: free leader must have a legal hint`);
+            game.act(actor.id, { type: 'play', ...hint });
+            for (const id of hint.cardIds) { assert.equal(played.has(id), false, `seed ${seed}: card played twice`); played.add(id); }
+          }
+        }
+      } else if (game.phase === 'skill_discard') {
+        const actor = game.players.find(p => game.view(p.id).mustDiscard > 0)!;
+        assert.ok(actor, `seed ${seed}: discard phase must have an overflowing player`);
+        const amount = game.view(actor.id).mustDiscard;
+        const selected = [...actor.skills].sort(() => random() - 0.5).slice(0, amount).map(s => s.id);
+        game.act(actor.id, { type: 'discard', skillIds: selected });
       } else assert.fail(`seed ${seed}: unexpected phase ${game.phase}`);
 
       const held = game.players.flatMap(p => p.hand).map(c => c.id);

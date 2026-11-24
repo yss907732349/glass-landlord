@@ -5,6 +5,7 @@ import { createGameServer } from '../server/index.ts';
 import { readyBots, runBotTurn } from '../server/bots.ts';
 import { Game } from '../src/shared/game.ts';
 import { classify } from '../src/shared/rules.ts';
+import { getSkill } from '../src/shared/skills.ts';
 import type { ClientMessage, GameAction, GameView, ServerMessage } from '../src/shared/types.ts';
 
 class Client {
@@ -111,11 +112,27 @@ test('real websocket room: password, capacity, private hands, turns, skills and 
   await c.receive((item): item is Extract<ServerMessage, { type: 'state' }> => item.type === 'state' && item.state.turnId === seatC && item.state.passCount === 1);
   const afterPass = await c.act({ type: 'pass' });
   assert.equal(afterPass.currentPlay, null);
-  assert.equal(afterPass.phase, 'skill_use');
+  assert.equal(afterPass.phase, 'playing');
+  assert.equal(afterPass.turnId, host.playerId);
   assert.equal(afterPass.players.find(player => player.id === host.playerId)?.skillCount, 2);
   assert.equal(afterPass.players.find(player => player.id === friend.playerId)?.skillCount, 1);
   assert.equal(afterPass.skills.length, 1);
-  await b.receive((item): item is Extract<ServerMessage, { type: 'state' }> => item.type === 'state' && item.state.phase === 'skill_use');
+  for (const client of [a, b, c]) await client.receive((item): item is Extract<ServerMessage, { type: 'state' }> => item.type === 'state' && item.state.version >= afterPass.version);
+  const beforeWrongTurn = b.messages.length;
+  b.send({ type: 'action', action: { type: 'skill', skillId: b.state.skills[0].id, targetId: host.playerId } });
+  assert.match((await b.receive(isError, beforeWrongTurn)).message, /回合|轮到|技能/);
+  const drawnSkill = a.state.skills[0];
+  const definition = getSkill(drawnSkill.kind);
+  const used = await a.act({ type: 'skill', skillId: drawnSkill.id, ...(definition.target ? { targetId: friend.playerId } : {}), ...(definition.select ? { cardIds: a.state.hand.slice(0, definition.select).map(card => card.id) } : {}) });
+  assert.equal(used.phase, 'playing');
+  assert.equal(used.turnId, host.playerId);
+  assert.ok(!used.skills.some(skill => skill.id === drawnSkill.id));
+  assert.equal(used.skillActorId, null);
+  assert.equal(used.skillBudget, 0);
+  const continued = await a.act({ type: 'play', cardIds: [a.state.hand.find(card => !card.wild)!.id] });
+  assert.equal(continued.currentPlay?.playerId, host.playerId);
+  assert.notEqual(continued.turnId, host.playerId);
+  await b.receive((item): item is Extract<ServerMessage, { type: 'state' }> => item.type === 'state' && item.state.version >= continued.version);
 
   const beforeDisconnect = a.messages.length;
   await b.close();
@@ -164,7 +181,10 @@ test('health endpoint and websocket origin checks', async t => {
   t.after(() => app.close());
   const response = await fetch(`http://127.0.0.1:${app.port}/health`);
   assert.equal(response.status, 200);
-  assert.equal((await response.json() as { ok: boolean }).ok, true);
+  const health = await response.json() as { ok: boolean; version: string; protocol: string };
+  assert.equal(health.ok, true);
+  assert.match(health.version, /^\d+\.\d+\.\d+/);
+  assert.equal(health.protocol, 'turn-skills-v2');
   assert.equal((await fetch(`http://127.0.0.1:${app.port}/src/shared/game.ts`)).status, 404);
   const socket = new WebSocket(`ws://127.0.0.1:${app.port}/ws`, { origin: 'https://untrusted.example' });
   const status = await new Promise<number>((resolve, reject) => {
@@ -184,10 +204,8 @@ function botGame() {
   game.act('human', { type: 'start' });
   game.act(game.turnId!, { type: 'bid', value: 3 });
   game.landlordId = 'human';
-  game.phase = 'skill_use';
-  game.skillOrder = ['bot-a', 'bot-b', 'human']; game.skillIndex = 0;
-  game.skillBudgets = { 'bot-a': 1, 'bot-b': 1, human: 2 };
-  game.skillUses = { 'bot-a': 0, 'bot-b': 0, human: 0 };
+  game.phase = 'playing';
+  game.turnId = 'bot-a';
   return game;
 }
 
@@ -202,6 +220,11 @@ test('bot uses disruption against an opponent, skips illegal skills and handles 
   assert.equal(enemy.hand.length, enemyBefore + 2);
   assert.equal(teammate.hand.length, friendBefore);
   assert.equal(bot.skills.length, 0);
+  assert.equal(game.turnId, bot.id);
+  const beforePlay = bot.hand.length;
+  runBotTurn(game, bot.id);
+  assert.ok(bot.hand.length < beforePlay);
+  assert.notEqual(game.turnId, bot.id);
 
   const fallback = botGame();
   const fallbackBot = fallback.players.find(player => player.id === 'bot-a')!;
@@ -209,7 +232,8 @@ test('bot uses disruption against an opponent, skips illegal skills and handles 
   fallbackBot.skills = [{ id: 'wild', kind: 'wild' }, { id: 'reverse', kind: 'reverse' }];
   runBotTurn(fallback, fallbackBot.id);
   assert.deepEqual(fallbackBot.skills.map(skill => skill.kind), ['wild']);
-  assert.equal(fallback.pendingReverse, true);
+  assert.equal(fallback.direction, -1);
+  assert.equal(fallback.turnId, fallbackBot.id);
 
   const identity = botGame();
   identity.players.find(player => player.id === 'bot-a')!.skills = [{ id: 'swap', kind: 'identity' }];
@@ -239,4 +263,22 @@ test('farmer bot yields to a teammate close to winning and bots ready after rest
   game.act('human', { type: 'ready', ready: true });
   game.act('human', { type: 'start' });
   assert.equal(game.phase, 'bidding');
+});
+
+test('bot uses at most two skills before playing, then can use skills again next turn', () => {
+  const game = botGame();
+  const bot = game.players.find(player => player.id === 'bot-a')!;
+  game.landlordId = bot.id;
+  bot.skills = [{ id: 'three-a', kind: 'three' }, { id: 'three-b', kind: 'three' }, { id: 'three-c', kind: 'three' }];
+  const cards = bot.hand.length;
+  for (let i = 0; i < 3 && game.turnId === bot.id; i++) runBotTurn(game, bot.id);
+  assert.notEqual(game.turnId, bot.id);
+  assert.ok(bot.skills.length >= 1);
+  assert.ok(bot.hand.length < cards);
+  game.turnId = bot.id;
+  game.currentPlay = null;
+  const remaining = bot.skills.length;
+  runBotTurn(game, bot.id);
+  assert.equal(bot.skills.length, remaining - 1);
+  assert.equal(game.turnId, bot.id);
 });

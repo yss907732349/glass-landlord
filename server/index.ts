@@ -7,6 +7,7 @@ import { WebSocketServer, WebSocket } from 'ws';
 import { Game } from '../src/shared/game.ts';
 import { readyBots, runBotTurn } from './bots.ts';
 import type { ClientMessage, ServerMessage } from '../src/shared/types.ts';
+import packageInfo from '../package.json' with { type: 'json' };
 
 const scrypt = promisify(scryptCallback);
 const MAX_MESSAGE = 32 * 1024;
@@ -112,7 +113,7 @@ export async function createGameServer(options: { port?: number; host?: string; 
     }
     if (pathname === '/health') {
       response.writeHead(200, { 'Content-Type': MIME['.json'], 'Cache-Control': 'no-store' });
-      response.end(request.method === 'HEAD' ? undefined : JSON.stringify({ ok: true, service: 'glass-landlord', rooms: rooms.size }));
+      response.end(request.method === 'HEAD' ? undefined : JSON.stringify({ ok: true, service: 'glass-landlord', version: packageInfo.version, protocol: 'turn-skills-v2', rooms: rooms.size }));
       return;
     }
     if (pathname.includes('\0') || pathname.includes('\\')) { response.writeHead(400).end(); return; }
@@ -349,7 +350,7 @@ export async function createGameServer(options: { port?: number; host?: string; 
           const bot = [...room.seats.values()].find(seat => {
             if (!seat.id.startsWith('bot-')) return false;
             if (firstView.phase === 'skill_discard') return room.game.view(seat.id).mustDiscard > 0;
-            return (firstView.phase === 'skill_use' ? firstView.skillActorId : firstView.turnId) === seat.id;
+            return ['bidding', 'playing'].includes(firstView.phase) && firstView.turnId === seat.id;
           });
           if (bot) {
             try { runBotTurn(room.game, bot.id); }

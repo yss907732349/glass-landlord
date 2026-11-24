@@ -6,6 +6,10 @@ export type Phase = 'lobby' | 'bidding' | 'playing' | 'skill_discard' | 'skill_u
 export interface PlayerView { id: string; name: string; connected: boolean; ready: boolean; cardCount: number; skillCount: number; role: 'landlord' | 'farmer' | null; bid: number | null }
 export interface Combination { type: string; rank: number; length: number; size: number; label: string }
 export interface PlayedCards { playerId: string; cards: Card[]; combination: Combination; wildAs?: Record<string, number> }
+export interface GameEvent {
+  id: string; type: 'drawSkills' | 'discardSkills' | 'skill' | 'play' | 'pass';
+  actorId: string; targetId?: string; skillKind?: SkillKind; count?: number; at: number;
+}
 export interface GameView {
   code: string; selfId: string; hostId: string; phase: Phase; players: PlayerView[];
   hand: Card[]; skills: SkillCard[]; turnId: string | null; landlordId: string | null;
@@ -14,7 +18,7 @@ export interface GameView {
   skillActorId: string | null; skillOrder: string[]; skillUsed: number; skillBudget: number;
   mustDiscard: number; logs: string[]; privatePeek: Card[];
   winner: 'landlord' | 'farmers' | null; winnerId: string | null;
-  deadline: number | null; paused: boolean; version: number;
+  deadline: number | null; paused: boolean; version: number; events: GameEvent[];
 }
 export type GameAction =
   | { type: 'fillBots' }

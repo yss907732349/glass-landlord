@@ -3,8 +3,19 @@ import { findHint } from '../src/shared/rules.ts';
 import { getSkill } from '../src/shared/skills.ts';
 import type { Game } from '../src/shared/game.ts';
 
+const turnSkills = new WeakMap<Game, Map<string, { used: number; maximum: number }>>();
+
+function skillsUsed(game: Game, id: string) {
+  let turns = turnSkills.get(game);
+  if (!turns) { turns = new Map(); turnSkills.set(game, turns); }
+  let turn = turns.get(id);
+  if (!turn) { turn = { used: 0, maximum: randomInt(1, 3) }; turns.set(id, turn); }
+  return turn;
+}
+
 export function readyBots(game: Game): void {
   if (game.phase !== 'lobby') return;
+  turnSkills.delete(game);
   for (const bot of game.players.filter(player => player.id.startsWith('bot-'))) game.act(bot.id, { type: 'ready', ready: true });
 }
 
@@ -16,15 +27,23 @@ export function runBotTurn(game: Game, id: string): void {
   if (view.phase === 'bidding') {
     game.act(id, { type: 'bid', value: view.bidMax === 0 ? 1 : 0 });
   } else if (view.phase === 'playing') {
+    if (view.turnId !== id) return;
+    const turn = skillsUsed(game, id);
+    if (turn.used < turn.maximum && trySkill(game, id)) { turn.used++; return; }
     const hint = findHint(view.hand, view.currentPlay?.combination ?? null);
     const self = view.players.find(player => player.id === id)!;
     const last = view.players.find(player => player.id === view.currentPlay?.playerId);
     const yieldToFriend = self.role === 'farmer' && last?.role === 'farmer'
       && hint?.cardIds.length !== view.hand.length && (last.cardCount <= 5 || randomInt(100) < 65);
     game.act(id, hint && !yieldToFriend ? { type: 'play', ...hint } : { type: 'pass' });
+    turnSkills.get(game)?.delete(id);
   } else if (view.phase === 'skill_discard') {
     game.act(id, { type: 'discard', skillIds: view.skills.slice(0, view.mustDiscard).map(skill => skill.id) });
-  } else if (view.phase === 'skill_use') {
+  }
+}
+
+function trySkill(game: Game, id: string): boolean {
+    const view = game.view(id);
     const self = view.players.find(player => player.id === id)!;
     const others = view.players.filter(player => player.id !== id).sort((a, b) => {
       const enemyA = a.role !== self.role ? 1 : 0;
@@ -45,10 +64,9 @@ export function runBotTurn(game: Game, id: string): void {
         if (skill.kind === 'identity' && target!.role === self.role) continue;
         try {
           game.act(id, { type: 'skill', skillId: skill.id, ...(target ? { targetId: target.id } : {}), ...(definition.select ? { cardIds: giftCards.slice(0, definition.select).map(card => card.id) } : {}) });
-          return;
+          return true;
         } catch { /* An expired global skill or illegal target can be replaced by another card. */ }
       }
     }
-    game.act(id, { type: 'skillEnd' });
-  }
+    return false;
 }

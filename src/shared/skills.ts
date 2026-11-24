@@ -11,7 +11,7 @@ export const SKILLS: SkillDefinition[] = [
   { kind: 'mutual', name: '你也别跑', description: '你和目标各获得三张3～7的小牌。一起坐牢！', weight: 3, target: true, select: 0, tone: 'rare' },
   { kind: 'identity', name: '身份互换', description: '与相反身份的目标交换阵营，手牌不变。每局限一次。', weight: 1, target: true, select: 0, tone: 'epic' },
   { kind: 'addTwo', name: '加倍关照', description: '额外生成两张3～2的随机牌，交给目标。', weight: 6, target: true, select: 0, tone: 'rare' },
-  { kind: 'reverse', name: '反向操作', description: '技能阶段结束后反转出牌方向，两次反转相互抵消。', weight: 16, target: false, select: 0, tone: 'normal' },
+  { kind: 'reverse', name: '反向操作', description: '立即反转出牌方向，仍由你完成当前回合。两次反转相互抵消。', weight: 16, target: false, select: 0, tone: 'normal' },
 ];
 
 export function getSkill(kind: SkillKind): SkillDefinition {

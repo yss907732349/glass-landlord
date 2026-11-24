@@ -14,6 +14,8 @@ try {
   app = await electron.launch({ executablePath: path.join(project, 'release/win-unpacked/玻璃斗地主.exe'), cwd: project, env, timeout: 25000 });
   app.process().stderr?.on('data', chunk => report.stderr.push(chunk.toString()));
   const page = await app.firstWindow({ timeout: 25000 });
+  await page.evaluate(() => { localStorage.setItem("glass-server", location.origin); localStorage.removeItem("glass-room"); });
+  await page.reload();
   page.on('pageerror', error => report.errors.push(error.message));
   await page.getByRole('heading', { name: '朋友，入座。' }).waitFor({ timeout: 20000 });
   report.window = await page.evaluate(() => ({ title: document.title, background: getComputedStyle(document.body).backgroundColor, desktop: !!window.desktop, url: location.href, body: document.body.innerText.slice(0, 180) }));

@@ -1,17 +1,25 @@
-# 免费公网部署
+# 0.2.0 免费公网部署
 
 沿用123项目：GitHub保存代码与发布备用网页，Render Free运行房间服务。桌面版连接Render后可以跨网络联机；透明效果由本地Windows客户端负责。
 
+当前已部署的房间服务为 https://glass-landlord.onrender.com ，新版客户端和GitHub Pages默认连接此地址。以下步骤用于重新部署或迁移。
+
 1. 在自己的GitHub账号创建本项目仓库，推送当前源码。不要上传node_modules、release或任何账号密钥。GitHub Free的Pages通常需公开仓库。
 2. 在Render连接该仓库，使用New → Blueprint读取根目录render.yaml。确认实例套餐显示Free。构建会安装依赖、检查类型、打包网页与服务端。
-3. 记录服务地址，例如https://glass-landlord-example.onrender.com。访问/health应显示健康状态。
+3. 记录服务地址，例如https://glass-landlord-example.onrender.com。访问/health应显示健康状态、`version: "0.2.0"`和`protocol: "turn-skills-v2"`。新版本将技能改为在自己的正常出牌回合使用、不占出牌机会；服务器和三名玩家的客户端必须一起更新，不能只更新网页或EXE。
 4. 每个人打开桌面版，在设置的“房间服务地址”中填入同一个HTTPS根地址。之后一人创建房间，其余人凭房间号和密码加入。
 5. 如需备用网页，在GitHub仓库的Actions变量中配置ROOM_SERVER_URL为该Render地址，再启用Pages的GitHub Actions发布源并运行Publish web companion。桌面版不依赖Pages。
 6. 若要把公网地址预置进新客户端，设置同一个仓库变量后运行Build Windows desktop，从运行产物下载免安装EXE。
 
+本次Windows文件名为 `GlassLandlord-0.2.0-Windows.exe`。技能通过牌面选中、对手头像选目标及“使用”按钮操作，不再打开技能弹窗。按住左键拖过手牌批量选择，手牌区右键出牌；角落拖动缩放、顶部把手移动。浏览器备用入口支持相同牌局与操作，透明、置顶和穿透点击由Windows客户端提供。
+
+部署顺序建议为：推送源码 → 等Render构建完成 → 检查 `/health` 的版本和协议 → 发布新客户端及备用网页 → 三人创建新房。旧房间保存在旧进程内存里，服务升级会终止旧房间，建议等正在玩的朋友结束后再更新。
+
+公网验收运行 `node scripts/remote-playtest.mjs`。脚本先检查新协议，再创建自己的随机密码测试房，验证桌面与GitHub来源、三人叫分发牌、出牌清桌抽技能、自己回合使用技能后继续出牌、私牌隔离和断线恢复，并主动离开清理。结果写入 `artifacts/remote-playtest-report.json`，不会加入或操作其他玩家已有房间。
+
 Render免费服务空闲后可能休眠，首次连接可能需要约一分钟唤醒。免费额度由同一工作区服务共享；Render重启或休眠会清空内存房间。本方案不自动开通付费实例。
 
-ALLOWED_ORIGINS默认包含123项目使用的GitHub账号来源https://yss907732349.github.io。如换账号，需要改成真实来源（不带仓库路径）。桌面内置localhost页面和服务同源访问均受支持。不要把房间密码填入部署变量。
+ALLOWED_ORIGINS默认包含123项目使用的GitHub账号来源https://yss907732349.github.io。如换账号，需要改成真实来源（不带仓库路径）。桌面内置localhost页面和服务同源访问均受支持。Render反向代理使用 `TRUST_PROXY=1`，以免所有玩家共享同一个连接限流地址。构建需要 `pnpm install --frozen-lockfile --prod=false` 安装TypeScript/Vite等构建依赖；`NODE_ENV=production`用于运行期，不能因此省略构建工具。不要把房间密码填入部署变量。
 
 发布需要可用的GitHub和Render账号授权。工程配置齐全不代表已获得公网地址；以Render健康检查及三个远程客户端加入同一房间为发布验收。
 
