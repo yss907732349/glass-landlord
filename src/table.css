@@ -22,6 +22,7 @@ button, input, select { -webkit-tap-highlight-color: transparent; }
 h1, h2, p { margin: 0; }
 button { transition: color .12s, background .12s, border-color .12s; }
 .app-root { position: fixed; inset: 0; overflow: hidden; pointer-events: none; }
+.app-root.desktop-mode { inset: auto; left: var(--desktop-frame-x, 0px); top: var(--desktop-frame-y, 0px); width: var(--desktop-width, 100vw); height: var(--desktop-height, 100vh); }
 .table-shell { position: absolute; left: 50%; top: 50%; width: 1080px; height: 560px; transform-origin: center; opacity: var(--ui-opacity, .88); pointer-events: none; }
 .interactive, button, input, select, a { pointer-events: auto; }
 .topbar { height: 38px; display: flex; align-items: center; justify-content: space-between; padding: 0 28px; }
@@ -110,8 +111,14 @@ button { transition: color .12s, background .12s, border-color .12s; }
 .play-controls { position: absolute; top: 0; right: 0; min-height: 30px; display: flex; align-items: center; gap: 6px; }
 .play-controls button { min-height: 30px; padding: 6px 17px; }
 .turn-note { font-size: 11px; color: #9ba5b2; padding: 8px 11px; background: var(--surface); border-radius: 5px; }
-.wild-picker { display: flex; align-items: center; gap: 5px; padding: 3px 7px; background: var(--surface); border-radius: 5px; font-size: 10px; }
-.wild-picker select { width: 43px; height: 24px; padding: 1px 3px; font-size: 11px; }
+.wild-options { position: absolute; right: 0; bottom: calc(100% + 10px); width: 350px; padding: 10px; background: #1d242d; border: 1px solid #617286; border-radius: 6px; z-index: 45; }
+.wild-options-heading { display: flex; align-items: center; justify-content: space-between; color: #aab7c8; font-size: 11px; margin-bottom: 8px; }
+.wild-options .wild-options-heading button { min-height: 20px; padding: 0 4px; font-size: 17px; }
+.wild-options-list { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; max-height: 170px; overflow-y: auto; }
+.wild-options-list .wild-option { padding: 8px 9px; border: 1px solid #424f60; border-radius: 4px; background: #2b3542; text-align: left; }
+.wild-option:hover { background: #3c4a5c; border-color: #90a6bf; }
+.wild-option strong { display: block; font-size: 12px; font-weight: 500; color: #c6d1df; }
+.wild-option span { display: block; font-size: 10px; margin-top: 5px; color: #9faec1; }
 .own-hand { position: absolute; display: flex; justify-content: center; top: 47px; left: 0; right: 0; min-height: 116px; touch-action: none; user-select: none; }
 .playing-card { display: block; position: relative; flex-shrink: 0; padding: 0; width: 76px; height: 116px; border: 1px solid #424a56; border-radius: 6px; background: #262c35; color: #cbd2dc; text-align: left; user-select: none; transition: transform .12s, background .12s, border-color .12s; }
 .playing-card:disabled { opacity: 1; }
@@ -151,6 +158,19 @@ button { transition: color .12s, background .12s, border-color .12s; }
 .resize-handle.top-left { top: -6px; left: -2px; transform: rotate(180deg); }
 .resize-handle.bottom-right { bottom: -6px; right: -2px; }
 .table-footer { display: none; }
+.quick-chat { position: relative; }
+.chat-menu { position: absolute; top: calc(100% + 13px); left: 0; width: 246px; padding: 9px; background: #202731; border: 1px solid #4c596a; border-radius: 6px; z-index: 60; }
+.chat-menu-heading { display: flex; align-items: center; justify-content: space-between; padding: 0 5px 7px; color: #8e9db1; font-size: 10px; }
+.chat-menu-heading button { padding: 0 3px; font-size: 17px; }
+.chat-phrase { display: block; width: 100%; padding: 9px 8px; border-radius: 4px; text-align: left; color: #b7c3d3; font-size: 11px; line-height: 1.7; }
+.chat-phrase:hover { background: #344152; color: #d9e1eb; }
+.chat-bubbles { position: absolute; inset: 0; z-index: 42; pointer-events: none; }
+.chat-bubble { position: absolute; width: max-content; max-width: 270px; padding: 9px 12px; border: 1px solid #465467; border-radius: 6px; background: #242d39; }
+.chat-bubble small { display: block; font-size: 9px; color: #8495ac; margin-bottom: 4px; }
+.chat-bubble p { color: #c0ccdc; font-size: 12px; line-height: 1.8; }
+.chat-bubble.left-bubble { left: 48px; top: 158px; }
+.chat-bubble.right-bubble { right: 48px; top: 158px; }
+.chat-bubble.self-bubble { left: 45px; top: 242px; }
 
 /* Secondary surfaces stay closed until requested. */
 .welcome-layout { width: 350px; margin: 28px auto 0; }

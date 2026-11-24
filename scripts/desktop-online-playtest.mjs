@@ -21,8 +21,8 @@ const report = { checks: [], errors: [], sockets: [], profile, stderr: [] };
 try {
   const response = await fetch(`${expectedServer}/health`, { signal: AbortSignal.timeout(45000) });
   report.health = { status: response.status, body: await response.json() };
-  if (!response.ok || report.health.body.protocol !== 'turn-skills-v2') {
-    report.blocked = 'Public service has not deployed the current turn-skills-v2 game protocol; no public room or packaged online game was started.';
+  if (!response.ok || report.health.body.protocol !== 'turn-skills-v2' || !report.health.body.capabilities?.includes('quick-chat')) {
+    report.blocked = 'Public service has not deployed turn-skills-v2 with quick-chat capability; no public room or packaged online game was started.';
   }
 } catch (error) { report.blocked = `Public service health check failed: ${error.message}`; }
 if (report.blocked) {
@@ -30,7 +30,7 @@ if (report.blocked) {
   console.log(JSON.stringify(report, null, 2));
   process.exit(0);
 }
-report.checks.push('public service health confirmed compatible turn-skills-v2 protocol');
+report.checks.push('public service health confirmed compatible turn-skills-v2 protocol and quick-chat capability');
 try {
   app = await electron.launch({ executablePath: path.join(project, 'release/win-unpacked/玻璃斗地主.exe'), args: [`--user-data-dir=${profile}`], cwd: project, env, timeout: 30000 });
   app.process().stderr?.on('data', chunk => report.stderr.push(chunk.toString()));
@@ -84,6 +84,31 @@ try {
   report.room = await page.evaluate(() => ({ code: window.__onlineView.code, selfId: window.__onlineView.selfId }));
   assert.ok(report.sockets.includes('wss://glass-landlord.onrender.com/ws'));
   report.checks.push('created password room through default public secure WebSocket');
+  const chatButton = page.getByRole('button', { name: '快捷聊天', exact: true });
+  assert.equal(await chatButton.isEnabled(), true);
+  const beforeChat = await page.evaluate(() => {
+    const state = window.__onlineView;
+    return { phase: state.phase, turnId: state.turnId, hand: state.hand, skills: state.skills, currentPlay: state.currentPlay, passCount: state.passCount, direction: state.direction, landlordId: state.landlordId, deadline: state.deadline, paused: state.paused };
+  });
+  const beforeChatVersion = await page.evaluate(() => window.__onlineView.version);
+  await chatButton.click();
+  const phrases = ['快点吧我等到花儿也谢了', '共三小你打的几把牌', '给阿姨倒一杯卡布基诺', '你好机车啊', '你还能13张牌把我秒了？'];
+  assert.deepEqual(await page.locator('.chat-phrase').allTextContents(), phrases);
+  assert.equal(await page.locator('.chat-menu input,.chat-menu textarea,.chat-menu [contenteditable=true]').count(), 0);
+  report.checks.push('packaged chat button enabled and menu contains exactly the five requested fixed phrases');
+  await page.locator('.chat-phrase').first().click();
+  await page.waitForFunction(version => window.__onlineView?.version > version && window.__onlineView.events.some(event => event.type === 'chat' && event.actorId === window.__onlineView.selfId && event.phraseId === 0), beforeChatVersion);
+  const bubble = page.locator(`.chat-bubble.self-bubble[data-actor-id="${report.room.selfId}"][data-phrase-id="0"]`);
+  await bubble.waitFor({ state: 'visible' });
+  assert.equal(await bubble.locator('p').textContent(), phrases[0]);
+  const afterChat = await page.evaluate(() => {
+    const state = window.__onlineView;
+    return { phase: state.phase, turnId: state.turnId, hand: state.hand, skills: state.skills, currentPlay: state.currentPlay, passCount: state.passCount, direction: state.direction, landlordId: state.landlordId, deadline: state.deadline, paused: state.paused };
+  });
+  assert.deepEqual(afterChat, beforeChat);
+  assert.equal(await page.locator('.chat-menu').count(), 0);
+  await page.screenshot({ path: path.join(output, 'desktop-online-chat.png'), omitBackground: true });
+  report.checks.push('packaged client sent a fixed phrase over public WSS and displayed its own bubble without changing room progress');
   await page.getByRole('button', { name: '添加两位陪练，先玩一局', exact: true }).click();
   await page.waitForFunction(() => window.__onlineView?.players.length === 3);
   await page.getByRole('button', { name: '我准备好了', exact: true }).click();

@@ -41,7 +41,11 @@ class Client {
   get state() { return this.messages.slice().reverse().find(message => message.type === 'state')?.state; }
   wait(predicate, after = 0, timeout = 15_000) {
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => { this.listeners.delete(check); reject(new Error('Timed out waiting for a room response')); }, timeout);
+      const timer = setTimeout(() => {
+        this.listeners.delete(check);
+        const latest = this.messages.slice(-3).map(message => message.type === 'state' ? { type: 'state', phase: message.state.phase, version: message.state.version, lastEvent: message.state.events?.at(-1)?.type, phraseId: message.state.events?.at(-1)?.phraseId } : { type: message.type, ...(message.type === 'error' ? { message: message.message } : {}) });
+        reject(new Error(`Timed out during ${report.stage || 'room setup'}; recent public response metadata: ${JSON.stringify(latest)}`));
+      }, timeout);
       const check = () => {
         const message = this.messages.slice(after).find(predicate);
         if (message) { clearTimeout(timer); this.listeners.delete(check); resolve(message); }
@@ -69,10 +73,19 @@ class Client {
 async function allAtLeast(seats, version) {
   await Promise.all(seats.map(client => client.wait(stateWhere(state => state.version >= version))));
 }
-async function say(sender, phraseId, receivers) {
+async function say(sender, phraseId, receivers, probeCooldown = false) {
   const before = receivers.map(client => progress(client.state));
   const offsets = receivers.map(client => client.messages.length);
-  const state = await sender.act({ type: 'chat', phraseId });
+  let state;
+  if (probeCooldown) {
+    // Pipeline on one ordered connection: waiting for three remote broadcasts
+    // first can take over three seconds and make the next message legal.
+    const after = sender.messages.length, version = sender.state.version;
+    sender.send({ type: 'action', action: { type: 'chat', phraseId } });
+    sender.send({ type: 'action', action: { type: 'chat', phraseId: (phraseId + 1) % QUICK_CHATS.length } });
+    state = (await sender.wait(item => item.type === 'state' && item.state.version > version, after)).state;
+    assert.match((await sender.wait(item => item.type === 'error', after)).message, /3秒|稍等/);
+  } else state = await sender.act({ type: 'chat', phraseId });
   const event = state.events.at(-1);
   assert.equal(event.type, 'chat'); assert.equal(event.actorId, sender.joined.playerId); assert.equal(event.phraseId, phraseId);
   assert.deepEqual(Object.keys(event).sort(), ['actorId', 'at', 'id', 'phraseId', 'type']);
@@ -109,19 +122,19 @@ try {
     await allAtLeast(seats, third.state.version);
     assert.ok(seats.every(client => client.state.capabilities?.includes('quick-chat')));
     report.checks.push({ check: 'desktop and GitHub Pages origins joined an isolated password room' });
-    await say(host, 0, seats);
+    report.stage = 'first broadcast and pipelined cooldown';
+    await say(host, 0, seats, true);
     const baseline = host.state.version;
-    let after = host.messages.length;
-    host.send({ type: 'action', action: { type: 'chat', phraseId: 1 } });
-    assert.match((await host.wait(message => message.type === 'error', after)).message, /3秒|稍等/);
     assert.equal(host.state.version, baseline);
+    report.stage = 'rejecting invalid phrases and forged fields';
     for (const action of [{ type: 'chat', phraseId: 5 }, { type: 'chat', phraseId: 0, actorId: second.joined.playerId }, { type: 'chat', phraseId: 0, text: 'not a permitted phrase' }]) {
-      after = host.messages.length; host.send({ type: 'action', action });
+      const after = host.messages.length; host.send({ type: 'action', action });
       assert.match((await host.wait(message => message.type === 'error', after)).message, /快捷聊天/);
       assert.equal(host.state.version, baseline);
     }
     report.checks.push({ check: 'cooldown, invalid phrase, arbitrary text and forged actor are rejected without state changes' });
 
+    report.stage = 'readying and dealing';
     for (const client of seats) {
       const ready = await client.act({ type: 'ready', ready: true }); await allAtLeast(seats, ready.version);
     }
@@ -135,12 +148,14 @@ try {
       state = await actor.act({ type: 'pass' }); await allAtLeast(seats, state.version);
     }
     assert.equal(state.phase, 'playing'); assert.ok(seats.every(client => client.state.skills.length >= 1));
+    report.stage = 'chatting with stored skills';
     await say(second, 1, seats); await say(third, 2, seats);
     const readyAt = Math.max(sentAt.get(host), sentAt.get(second)) + 3100;
     await sleep(Math.max(0, readyAt - Date.now()));
     await say(host, 3, seats); await say(second, 4, seats);
     report.checks.push({ check: 'all five phrases worked with stored skills during ordinary play, including off-turn senders' });
     const offsets = [host.messages.length, second.messages.length];
+    report.stage = 'disconnect pause and chat';
     await third.close();
     await Promise.all([host, second].map((client, index) => client.wait(stateWhere(view => view.paused), offsets[index])));
     await sleep(Math.max(0, sentAt.get(host) + 3100 - Date.now()));

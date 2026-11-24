@@ -142,7 +142,8 @@ export function TableEffects({ view }: { view: GameView | null }) {
     for (const event of events) seen.current.add(event.id);
     if (seen.current.size > 120) seen.current = new Set(events.map(event => event.id));
     if (!fresh.length || view.paused) return;
-    const batch = fresh.slice(-MAX_EFFECTS).map(event => ({ event, selfId: view.selfId, players: view.players, direction: view.direction, expires: now + LIFETIME }));
+    const batch = fresh.filter(event => event.type !== 'chat').slice(-MAX_EFFECTS).map(event => ({ event, selfId: view.selfId, players: view.players, direction: view.direction, expires: now + LIFETIME }));
+    if (!batch.length) return;
     setActive(previous => [...previous.filter(effect => effect.expires > now), ...batch].slice(-MAX_EFFECTS));
   }, [view]);
   useEffect(() => {
@@ -151,11 +152,9 @@ export function TableEffects({ view }: { view: GameView | null }) {
     return () => window.removeEventListener('glass-effects-resume', resume);
   }, []);
   useEffect(() => {
-    const timer = setInterval(() => {
-      const now = Date.now();
-      setActive(previous => previous.some(effect => effect.expires <= now) ? previous.filter(effect => effect.expires > now) : previous);
-    }, 120);
-    return () => clearInterval(timer);
-  }, []);
+    if (!active.length) return;
+    const timer = setTimeout(() => setActive(previous => previous.filter(effect => effect.expires > Date.now())), Math.max(0, Math.min(...active.map(effect => effect.expires)) - Date.now()));
+    return () => clearTimeout(timer);
+  }, [active]);
   return <div className="table-effects" aria-live="polite" aria-atomic="false">{active.map(effect => <EventVisual effect={effect} key={effect.event.id}/>)}</div>;
 }
