@@ -12,7 +12,7 @@ import { QuickChat, ChatBubbles } from './QuickChat.tsx';
 
 type ScreenRect = { x: number; y: number; width: number; height: number };
 type DesktopLayout = { bounds: ScreenRect; primary: ScreenRect; displays: { id: number; bounds: ScreenRect; workArea: ScreenRect; scaleFactor: number }[]; reset?: boolean; previousBounds?: ScreenRect };
-declare global { interface Window { desktop?: { pin: (value: boolean) => void; passthrough: (value: boolean) => void; hide: () => void; minimize: () => void; close: () => void; info: () => Promise<{ addresses: string[]; layout?: DesktopLayout }>; isDesktop: boolean } } }
+declare global { interface Window { desktop?: { pin: (value: boolean) => void; passthrough: (value: boolean) => void; hide: () => void; minimize: () => void; close: () => void; info: () => Promise<{ addresses: string[]; layout?: DesktopLayout; window?: { pinned: boolean } }>; isDesktop: boolean } } }
 const skillInfo = (kind: string) => SKILLS.find(skill => skill.kind === kind)!;
 const UI_WIDTH = 1080, UI_HEIGHT = 560;
 const PHASE_NAMES: Record<string, string> = { lobby: '等待朋友入座', bidding: '叫地主', playing: '出牌', skill_discard: '弃掉多余技能', skill_use: '请更新客户端', finished: '本局结束' };
@@ -50,6 +50,7 @@ export default function App() {
   const [password, setPassword] = useState(''); const [roomCode, setRoomCode] = useState('');
   const [address, setAddress] = useState(() => localStorage.getItem('glass-server') || DEFAULT_ROOM_SERVER);
   const [settings, setSettings] = useState(false); const [help, setHelp] = useState(false); const [history, setHistory] = useState(false);
+  const [windowMenu, setWindowMenu] = useState(false);
   const [zoom, setZoom] = useState(() => Number(localStorage.getItem('glass-zoom')) || 1);
   const [opacity, setOpacity] = useState(() => Math.max(15, Math.min(100, Number(localStorage.getItem('glass-ui-opacity')) || 88)));
   const [pinned, setPinned] = useState(true); const [locked, setLocked] = useState(false);
@@ -84,13 +85,15 @@ export default function App() {
     setPosition(layout ? { x: layout.primary.x + layout.primary.width / 2 - layout.bounds.width / 2, y: layout.primary.y + layout.primary.height / 2 - layout.bounds.height / 2 } : { x: 0, y: 0 });
     setZoom(1);
   }
-  useEffect(() => { network.current!.restore(); window.desktop?.info().then(info => { setLocalAddresses(info.addresses); if (info.layout) applyDesktopLayout(info.layout, true); }); return () => network.current!.dispose(); }, []);
+  useEffect(() => { network.current!.restore(); window.desktop?.info().then(info => { setLocalAddresses(info.addresses); if (info.window) setPinned(info.window.pinned); if (info.layout) applyDesktopLayout(info.layout, true); }); return () => network.current!.dispose(); }, []);
   useEffect(() => { const update = () => setSize({ w: innerWidth, h: innerHeight }); addEventListener('resize', update); return () => removeEventListener('resize', update); }, []);
   useEffect(() => {
     const reset = () => { resetPosition(); setOpacity(88); };
     const displays = (event: Event) => applyDesktopLayout((event as CustomEvent<DesktopLayout>).detail);
+    const windowState = (event: Event) => { const pinned = (event as CustomEvent<{ pinned: boolean }>).detail?.pinned; if (typeof pinned === 'boolean') setPinned(pinned); };
     addEventListener('glass-reset-layout', reset); addEventListener('glass-display-layout', displays);
-    return () => { removeEventListener('glass-reset-layout', reset); removeEventListener('glass-display-layout', displays); };
+    addEventListener('glass-window-state', windowState);
+    return () => { removeEventListener('glass-reset-layout', reset); removeEventListener('glass-display-layout', displays); removeEventListener('glass-window-state', windowState); };
   }, []);
   useEffect(() => { localStorage.setItem('glass-zoom', String(zoom)); }, [zoom]);
   useEffect(() => { localStorage.setItem('glass-ui-opacity', String(opacity)); }, [opacity]);
@@ -114,13 +117,14 @@ export default function App() {
   const action = (value: Parameters<RoomConnection['action']>[0]) => { setStatus(''); if (!network.current!.action(value)) setStatus('尚未连接，请等待恢复或重新进入房间。'); };
   const toggleCard = (id: string) => setSelected(ids => ids.includes(id) ? ids.filter(item => item !== id) : [...ids, id]);
   const toggleDiscard = (id: string) => setDiscardIds(ids => ids.includes(id) ? ids.filter(item => item !== id) : [...ids, id]);
-  const drag = useRef<{ x: number; y: number; startX: number; startY: number } | null>(null);
+  const drag = useRef<{ pointerId: number; x: number; y: number; startX: number; startY: number } | null>(null);
   function startDrag(event: ReactPointerEvent<HTMLButtonElement>) {
-    if (locked) return; event.currentTarget.setPointerCapture(event.pointerId);
-    drag.current = { x: event.screenX, y: event.screenY, startX: position.x, startY: position.y };
+    if (locked || event.button !== 0 || !event.isPrimary || drag.current || sizing.current || sweep.current) return;
+    event.preventDefault(); event.currentTarget.setPointerCapture(event.pointerId);
+    drag.current = { pointerId: event.pointerId, x: event.screenX, y: event.screenY, startX: position.x, startY: position.y };
   }
-  function moveDrag(event: Pick<PointerEvent, 'screenX' | 'screenY'>) {
-    if (!drag.current) return;
+  function moveDrag(event: Pick<PointerEvent, 'pointerId' | 'screenX' | 'screenY'>) {
+    if (!drag.current || drag.current.pointerId !== event.pointerId) return;
     setPosition({ x: drag.current.startX + event.screenX - drag.current.x, y: drag.current.startY + event.screenY - drag.current.y });
   }
   function enter(event: React.FormEvent) {
@@ -156,17 +160,17 @@ export default function App() {
     if (!skillTurn) { setStatus('轮到你出牌时，就可以使用技能。'); return; }
     setChosenSkill(chosenSkill?.id === skill.id ? null : skill); setTarget(''); setSelected([]);
   }
-  const sweep = useRef<{ start: number; selecting: boolean; initial: string[] } | null>(null);
+  const sweep = useRef<{ pointerId: number; start: number; selecting: boolean; initial: string[] } | null>(null);
   function sweepDown(event: ReactPointerEvent<HTMLDivElement>) {
-    if (event.button !== 0 || !view) return;
+    if (event.button !== 0 || !event.isPrimary || !view || drag.current || sizing.current || sweep.current) return;
     const card = (event.target as Element).closest<HTMLElement>('[data-card-id]');
     const index = view.hand.findIndex(item => item.id === card?.dataset.cardId); if (index < 0) return;
     event.preventDefault(); event.currentTarget.setPointerCapture(event.pointerId);
-    sweep.current = { start: index, selecting: !selected.includes(view.hand[index].id), initial: [...selected] };
+    sweep.current = { pointerId: event.pointerId, start: index, selecting: !selected.includes(view.hand[index].id), initial: [...selected] };
     toggleCard(view.hand[index].id);
   }
   function sweepMove(event: ReactPointerEvent<HTMLDivElement>) {
-    if (!sweep.current || !view) return;
+    if (!sweep.current || sweep.current.pointerId !== event.pointerId || !event.isPrimary || !(event.buttons & 1) || !view) return;
     const cards = [...event.currentTarget.querySelectorAll<HTMLElement>('[data-card-id]')];
     let end = 0; cards.forEach((card, index) => { if (event.clientX >= card.getBoundingClientRect().left) end = index; });
     const { start, selecting, initial } = sweep.current; const next = new Set(initial);
@@ -176,13 +180,14 @@ export default function App() {
   function quickPlay(event: React.MouseEvent) {
     event.preventDefault(); if (view?.phase === 'playing' && myTurn && !view.paused && selected.length && !chosenSkill) play();
   }
-  const sizing = useRef<{ x: number; y: number; zoom: number; px: number; py: number; sign: number; fit: number } | null>(null);
+  const sizing = useRef<{ pointerId: number; x: number; y: number; zoom: number; px: number; py: number; sign: number; fit: number } | null>(null);
   function resizeDown(event: ReactPointerEvent<HTMLButtonElement>, sign: number) {
-    if (locked) return; event.preventDefault(); event.currentTarget.setPointerCapture(event.pointerId);
-    sizing.current = { x: event.screenX, y: event.screenY, zoom, px: position.x, py: position.y, sign, fit };
+    if (locked || event.button !== 0 || !event.isPrimary || drag.current || sizing.current || sweep.current) return;
+    event.preventDefault(); event.currentTarget.setPointerCapture(event.pointerId);
+    sizing.current = { pointerId: event.pointerId, x: event.screenX, y: event.screenY, zoom, px: position.x, py: position.y, sign, fit };
   }
-  function resizeMove(event: Pick<PointerEvent, 'screenX' | 'screenY'>) {
-    if (!sizing.current) return; const start = sizing.current;
+  function resizeMove(event: Pick<PointerEvent, 'pointerId' | 'screenX' | 'screenY'>) {
+    if (!sizing.current || sizing.current.pointerId !== event.pointerId) return; const start = sizing.current;
     const delta = ((event.screenX - start.x) * UI_WIDTH + (event.screenY - start.y) * UI_HEIGHT) / (UI_WIDTH * UI_WIDTH + UI_HEIGHT * UI_HEIGHT);
     const nextZoom = Math.max(.35, Math.min(2, start.zoom + start.sign * delta / start.fit));
     const scaleDelta = (nextZoom - start.zoom) * start.fit;
@@ -191,16 +196,40 @@ export default function App() {
   useEffect(() => {
     // Resizing the native viewport may release DOM pointer capture on Windows.
     // Keep layout gestures alive by tracking their screen coordinates on window.
-    const move = (event: PointerEvent) => { if (event.buttons) { moveDrag(event); resizeMove(event); } };
-    const end = () => { drag.current = null; sizing.current = null; };
-    addEventListener('pointermove', move); addEventListener('pointerup', end); addEventListener('pointercancel', end); addEventListener('blur', end);
-    return () => { removeEventListener('pointermove', move); removeEventListener('pointerup', end); removeEventListener('pointercancel', end); removeEventListener('blur', end); };
+    const move = (event: PointerEvent) => { if (event.isPrimary && (event.buttons & 1)) { moveDrag(event); resizeMove(event); } };
+    const end = (event: PointerEvent) => {
+      if (event.type === 'pointerup' && (event.buttons & 1)) return;
+      if (drag.current?.pointerId === event.pointerId) drag.current = null;
+      if (sizing.current?.pointerId === event.pointerId) sizing.current = null;
+      if (sweep.current?.pointerId === event.pointerId) sweep.current = null;
+    };
+    const blur = () => { drag.current = null; sizing.current = null; sweep.current = null; setWindowMenu(false); };
+    addEventListener('pointermove', move); addEventListener('pointerup', end); addEventListener('pointercancel', end); addEventListener('blur', blur);
+    return () => { removeEventListener('pointermove', move); removeEventListener('pointerup', end); removeEventListener('pointercancel', end); removeEventListener('blur', blur); };
   }, []);
+  useEffect(() => {
+    if (!windowMenu) return;
+    const outside = (event: PointerEvent) => { if (!(event.target instanceof Element && event.target.closest('.window-menu-wrap'))) setWindowMenu(false); };
+    const escape = (event: KeyboardEvent) => { if (event.key === 'Escape') { setWindowMenu(false); document.querySelector<HTMLButtonElement>('.window-menu-trigger')?.focus(); } };
+    addEventListener('pointerdown', outside); addEventListener('keydown', escape);
+    return () => { removeEventListener('pointerdown', outside); removeEventListener('keydown', escape); };
+  }, [windowMenu]);
 
   return <div className={`app-root ${window.desktop ? 'desktop-mode' : 'browser-mode'} ${view ? 'has-game' : 'in-lobby'}`} style={{ '--ui-opacity': opacity / 100 } as CSSProperties}>
     <main className="table-shell" style={{ transform: `translate(calc(-50% + ${position.x}px),calc(-50% + ${position.y}px)) scale(${scale})` }}>
       <header className="topbar"><div className="wordmark"><span className="brand-mark">♠</span><div><strong>玻璃斗地主</strong><span>朋友局，别客气。</span></div></div>
-        <div className="window-tools"><button className="icon-button move-handle" title="拖动整套界面" aria-label="拖动整套界面" onPointerDown={startDrag} onPointerUp={() => { drag.current = null; }} onPointerCancel={() => { drag.current = null; }}>⠿</button><span className="toolbar-divider"/><button className="zoom-label" title="重置位置与缩放" onClick={resetPosition}>{Math.round(zoom * 100)}%</button><span className="toolbar-divider"/><button className={`icon-button ${pinned ? 'toggled' : ''}`} aria-label={pinned ? '取消置顶' : '置顶'} title={window.desktop ? '置顶' : '桌面版支持置顶'} onClick={() => { setPinned(!pinned); window.desktop?.pin(!pinned); }}>♧</button><button className="icon-button" aria-label="玩法说明" onClick={() => setHelp(true)}>?</button><button className={`icon-button ${settings ? 'toggled' : ''}`} aria-label="设置" onClick={() => setSettings(!settings)}>⚙</button>{window.desktop && <><button className="icon-button" aria-label="最小化" onClick={() => window.desktop?.minimize()}>_</button><button className="icon-button close-button" aria-label="关闭" onClick={() => window.desktop?.close()}>×</button></>}</div>
+        <div className="window-tools"><button className="icon-button move-handle" disabled={locked} title="拖动整套界面" aria-label="拖动整套界面" onPointerDown={startDrag}>⠿</button><span className="toolbar-divider"/><button className="zoom-label" title="重置位置与缩放" onClick={resetPosition}>{Math.round(zoom * 100)}%</button><span className="toolbar-divider"/><button className={`icon-button ${pinned ? 'toggled' : ''}`} aria-label={pinned ? '取消置顶' : '置顶'} title={window.desktop ? '置顶' : '桌面版支持置顶'} onClick={() => { setPinned(!pinned); window.desktop?.pin(!pinned); }}>♧</button><button className="icon-button" aria-label="玩法说明" onClick={() => setHelp(true)}>?</button><button className={`icon-button ${settings ? 'toggled' : ''}`} aria-label="设置" onClick={() => setSettings(!settings)}>⚙</button>{window.desktop && <div className="window-menu-wrap">
+          <button type="button" className="icon-button window-menu-trigger" aria-label="窗口菜单" title="窗口菜单" aria-haspopup="menu" aria-expanded={windowMenu} aria-controls="window-actions" onClick={() => setWindowMenu(value => !value)}>⋯</button>
+          {windowMenu && <div id="window-actions" className="window-menu interactive" data-native-overlay role="menu" aria-label="窗口操作" style={{ '--window-menu-scale': Math.max(1, 1 / scale) } as CSSProperties} onKeyDown={event => {
+            const items = [...event.currentTarget.querySelectorAll<HTMLButtonElement>('[role=menuitem]')];
+            const index = items.indexOf(document.activeElement as HTMLButtonElement);
+            const next = event.key === 'ArrowDown' ? (index + 1) % items.length : event.key === 'ArrowUp' ? (index + items.length - 1) % items.length : event.key === 'Home' ? 0 : event.key === 'End' ? items.length - 1 : -1;
+            if (next >= 0) { event.preventDefault(); items[next]?.focus(); }
+          }}>
+            <button type="button" role="menuitem" onClick={() => { setWindowMenu(false); window.desktop?.hide(); }}>隐藏牌局<small>Ctrl+Shift+H</small></button>
+            <button type="button" role="menuitem" className="window-menu-exit" onClick={() => { setWindowMenu(false); window.desktop?.close(); }}>退出程序</button>
+          </div>}
+        </div>}</div>
       </header>
       {!view ? <section className="welcome-layout">
         <div className="welcome-art"><span className="welcome-caption">没有桌布，也能开一桌。</span><h1>好牌靠手气。<br/>翻盘靠捣乱。</h1><p>透明的牌，藏不住的坏心思。<br/>叫上两位朋友，把这局摆在桌面上。</p><div className="showcase-cards"><PlayingCard card={{ id: 'show1', rank: 14, suit: 'S' }} disabled/><PlayingCard card={{ id: 'show2', rank: 13, suit: 'H' }} disabled/><PlayingCard card={{ id: 'show3', rank: 3, suit: 'W', wild: true }} disabled/></div><div className="showcase-tag"><span>↶</span><div><strong>下一手，反着来。</strong><small>11 种技能，让朋友重新认识你。</small></div></div></div>
@@ -217,7 +246,7 @@ export default function App() {
         {view.bottom.length > 0 && <div className="bottom-cards"><span>底牌</span>{view.bottom.map(card => <span className={card.suit === 'H' || card.suit === 'D' ? 'red' : ''} key={card.id}>{rankLabel(card.rank)}{suitLabel(card.suit)}</span>)}</div>}
         <section className="own-area"><div className="own-heading"><span className={`self-role ${self?.role === 'landlord' ? 'landlord-role' : ''}`}>{self?.role === 'landlord' ? '地主' : self?.role === 'farmer' ? '农民' : '玩家'}</span><strong>{self?.name}</strong><span>剩余 <b>{view.hand.length}</b> 张</span>{view.paused && <span className="pause-label">朋友掉线中，牌局暂停</span>}</div>
           <div className="play-controls interactive">{view.phase === 'playing' && myTurn && <><button className="secondary-button" disabled={!view.currentPlay || view.paused} onClick={() => { action({ type: 'pass' }); setSelected([]); }}>不出</button><button className="secondary-button" disabled={view.paused} onClick={hint}>提示</button><button className="primary-button" disabled={!selected.length || view.paused || !!chosenSkill} onClick={() => play()}>出牌{selected.length > 0 ? ` · ${selected.length}` : ''}</button></>}{view.phase === 'playing' && !myTurn && <span className="turn-note">等{view.players.find(p => p.id === view.turnId)?.name}出牌</span>}{wildChoices && <aside className="wild-options interactive" aria-label="选择赖子打法"><div className="wild-options-heading"><span>有 {wildChoices.length} 种合法打法，选一种出牌</span><button type="button" className="text-button" aria-label="取消赖子选择" onClick={() => setWildChoices(null)}>×</button></div><div className="wild-options-list">{wildChoices.map(option => { const ranks = Object.values(option.wildAs).sort((a, b) => a - b).map(rankLabel).join('、'); const shape = option.combination; const range = shape.length > 1 ? `${rankLabel(shape.rank - shape.length + 1)}–${rankLabel(shape.rank)}` : rankLabel(shape.rank); return <button type="button" className="wild-option" data-wild-ranks={ranks} key={JSON.stringify(option.wildAs)} aria-label={`${shape.label} ${range}，赖子当${ranks}并出牌`} title={option.effectiveRanks.map(rankLabel).join(' ')} onClick={() => play(option)}><strong>{shape.label} {range}</strong><span>赖子当 {ranks}</span></button>; })}</div></aside>}</div>
-          <div className="own-hand interactive" onPointerDown={sweepDown} onPointerMove={sweepMove} onPointerUp={() => { sweep.current = null; }} onPointerCancel={() => { sweep.current = null; }} onLostPointerCapture={() => { sweep.current = null; }} onContextMenu={quickPlay} style={{ '--hand-step': `${Math.min(58, 920 / Math.max(view.hand.length, 1))}px` } as CSSProperties}>{view.hand.map(card => <PlayingCard key={card.id} card={card} selected={selected.includes(card.id)} dragManaged onClick={() => toggleCard(card.id)}/>)}</div>
+          <div className="own-hand interactive" onPointerDown={sweepDown} onPointerMove={sweepMove} onLostPointerCapture={event => { if (sweep.current?.pointerId === event.pointerId) sweep.current = null; }} onContextMenu={quickPlay} style={{ '--hand-step': `${Math.min(58, 920 / Math.max(view.hand.length, 1))}px` } as CSSProperties}>{view.hand.map(card => <PlayingCard key={card.id} card={card} selected={selected.includes(card.id)} dragManaged onClick={() => toggleCard(card.id)}/>)}</div>
         </section>
         <section className="skill-zone interactive"><div className="skill-zone-heading"><strong>技能 <span>{view.skills.length}/{self?.role === 'landlord' ? 3 : 2}</span></strong><span>{view.mustDiscard ? `弃掉 ${view.mustDiscard} 张` : chosenSkill && skillDef ? `${skillDef.select ? `选 ${skillDef.select} 张手牌（已选 ${selected.length}） · ` : ''}${skillDef.target ? target ? `目标：${view.players.find(p => p.id === target)?.name}` : '点对手头像选择目标' : '无需选择目标'} · 使用后仍可出牌` : ''}</span></div>
           <div className="skill-row" style={{ "--skill-count": Math.max(1, view.skills.length) } as CSSProperties}>{view.skills.map(skill => { const def = skillInfo(skill.kind); return <button className={`skill-card ${def.tone} ${discardIds.includes(skill.id) ? 'discard-selected' : ''} ${chosenSkill?.id === skill.id ? 'skill-selected' : ''}`} data-skill-id={skill.id} data-kind={skill.kind} aria-pressed={chosenSkill?.id === skill.id || discardIds.includes(skill.id)} aria-label={def.name} key={skill.id} onClick={() => chooseSkill(skill)}><strong>{def.name}</strong><span className="skill-tooltip" role="tooltip">{def.description}</span>{discardIds.includes(skill.id) && <b className="discard-check">✓</b>}</button>; })}{!view.skills.length && <div className="empty-skills">暂无技能</div>}
@@ -228,8 +257,8 @@ export default function App() {
       </>}
       {status && status !== '已连接' && <div className={`status-toast interactive ${busy ? 'connecting' : ''}`} role="status"><span>{busy ? '◌' : '·'}</span>{status}<button aria-label="关闭提示" onClick={() => setStatus('')}>×</button></div>}
       <TableEffects view={view}/><ChatBubbles view={view}/>
-      {[-1, 1].map(sign => <button key={sign} className={`resize-handle interactive ${sign < 0 ? 'top-left' : 'bottom-right'}`} aria-label={sign < 0 ? '左上角拖动缩放' : '右下角拖动缩放'} title="按住拖动缩放，双击恢复" onPointerDown={event => resizeDown(event, sign)} onPointerUp={() => { sizing.current = null; }} onPointerCancel={() => { sizing.current = null; }} onDoubleClick={resetPosition}><span aria-hidden="true"/></button>)}
-      <footer className="table-footer"><span>透明桌面 · 三人技能局</span><span>{window.desktop ? '空白处可点击桌面 · Ctrl+Shift+H 隐藏 / 显示' : '浏览器版可联机 · 透明置顶请打开桌面版'}</span></footer>
+      {[-1, 1].map(sign => <button key={sign} className={`resize-handle interactive ${sign < 0 ? 'top-left' : 'bottom-right'}`} disabled={locked} aria-label={sign < 0 ? '左上角拖动缩放' : '右下角拖动缩放'} title="按住拖动缩放，双击恢复" onPointerDown={event => resizeDown(event, sign)} onDoubleClick={resetPosition}><span aria-hidden="true"/></button>)}
+      <footer className="table-footer"><span>透明桌面 · 三人技能局</span><span>{window.desktop ? '窗口外可操作桌面 · Ctrl+Shift+H 隐藏 / 显示' : '浏览器版可联机 · 透明置顶请打开桌面版'}</span></footer>
       {view?.phase === 'finished' && <div className="modal-backdrop interactive"><section className="modal glass-panel result-panel"><span className="result-suit">{(self?.role === 'landlord' && view.winner === 'landlord') || (self?.role === 'farmer' && view.winner === 'farmers') ? '♛' : '♠'}</span><h2>{view.winner === 'landlord' ? '地主拿下这局。' : '农民一起翻盘。'}</h2><p>{view.players.find(p => p.id === view.winnerId)?.name}率先出完手牌 · 最终倍率 ×{view.multiplier}</p><div className="result-players">{view.players.map(p => <span key={p.id}>{p.name}<b>{p.role === 'landlord' ? '地主' : '农民'}</b><small>剩 {p.cardCount} 张</small></span>)}</div>{view.hostId === view.selfId ? <button className="primary-button" onClick={() => action({ type: 'restart' })}>再来一局</button> : <p>等房主开启下一局</p>}<button className="text-button" onClick={() => network.current!.leave()}>回到入座页</button></section></div>}
       {peekOpen && !!view?.privatePeek.length && <aside className="peek-inline interactive"><div><span>偷看结果 · 仅你可见</span><button className="text-button" aria-label="收起偷看结果" onClick={() => setPeekOpen(false)}>×</button></div><div className="peek-cards">{view.privatePeek.map(card => <PlayingCard card={card} key={card.id} small disabled/>)}</div></aside>}
       {settings && <div className="modal-backdrop interactive"><section className="modal glass-panel settings-panel"><button className="modal-close" aria-label="关闭" onClick={() => setSettings(false)}>×</button><h2>界面设置</h2><label>整体透明度 <b>{100 - opacity}%</b><input aria-label="整体透明度" type="range" min="0" max="85" value={100 - opacity} onChange={e => setOpacity(100 - Number(e.target.value))}/></label><p>牌面、文字和按钮一起变淡。Ctrl+Shift+0 可恢复可见度和布局。</p><label>界面缩放 <b>{Math.round(zoom * 100)}%</b><input type="range" min="35" max="200" value={Math.round(zoom * 100)} onChange={e => setZoom(Number(e.target.value) / 100)}/></label><label className="checkbox-label"><input type="checkbox" checked={locked} onChange={e => setLocked(e.target.checked)}/>锁定布局，避免误拖</label><label>房间服务地址<input value={address} onChange={e => { setAddress(e.target.value); localStorage.setItem('glass-server', e.target.value); }} placeholder="留空连接默认联机服务" disabled={!!view}/></label><p>默认已配置公网联机服务，朋友们打开新版即可在同一处建房和加入。离线陪练或局域网游玩可切换本机服务。</p>{!view && <div className="server-shortcuts"><button className="text-button" onClick={() => { setAddress(DEFAULT_ROOM_SERVER); localStorage.setItem("glass-server", DEFAULT_ROOM_SERVER); }}>使用默认联机服务</button>{window.desktop && <button className="text-button" onClick={() => { setAddress(location.origin); localStorage.setItem("glass-server", location.origin); }}>使用本机服务（离线 / 局域网）</button>}</div>}{localAddresses.length > 0 && <div className="local-addresses"><strong>本机房间地址 · 同一局域网可用</strong>{localAddresses.map(item => <button className="text-button" key={item} onClick={() => navigator.clipboard.writeText(item).then(() => setStatus("局域网地址已复制。"))}>{item} ⧉</button>)}</div>}<button className="secondary-button" onClick={resetPosition}>恢复位置与大小</button><button className="primary-button" onClick={() => setSettings(false)}>完成</button></section></div>}

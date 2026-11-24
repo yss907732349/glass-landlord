@@ -32,6 +32,12 @@ button { transition: color .12s, background .12s, border-color .12s; }
 .wordmark div > span, .has-game .wordmark { display: none; }
 .window-tools, .room-strip { display: flex; align-items: center; gap: 2px; height: 34px; background: var(--surface); border: 1px solid var(--edge); border-radius: 7px; padding: 2px 5px; }
 .window-tools { margin-left: auto; }
+.window-menu-wrap { position: relative; }
+.window-menu { position: absolute; top: calc(100% + 8px); right: 0; width: 190px; padding: 5px; background: #202731; border: 1px solid #4c596a; border-radius: 6px; transform: scale(var(--window-menu-scale, 1)); transform-origin: top right; z-index: 100; }
+.window-menu > button { display: flex; align-items: center; justify-content: space-between; gap: 10px; width: 100%; min-height: 36px; padding: 8px 10px; border-radius: 4px; color: #bdc8d7; text-align: left; font-size: 12px; }
+.window-menu > button:hover, .window-menu > button:focus-visible { background: #344152; }
+.window-menu small { font-size: 9px; color: #8e9db1; }
+.window-menu > .window-menu-exit { color: #c9a2ad; }
 .icon-button { display: grid; place-items: center; width: 28px; height: 26px; border-radius: 4px; font-size: 16px; color: #929ba7; }
 .icon-button:hover, .icon-button.toggled { background: #303640; color: var(--ink); }
 .move-handle { cursor: grab; font-size: 22px; touch-action: none; }
