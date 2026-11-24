@@ -1,0 +1,187 @@
+.web-fullscreen-button { min-width: 48px; }
+.portrait-hint, .hand-scroll-controls { display: none; }
+
+/* Touch browsers use the available screen, independent of desktop zoom/position. */
+.mobile-mode {
+  background: #13171d;
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+  --ui-opacity: 1 !important;
+}
+.mobile-mode .table-shell {
+  position: relative;
+  left: auto; top: auto; width: 100%; height: 100%;
+  transform: none !important;
+  opacity: 1;
+  pointer-events: auto;
+}
+.mobile-mode button { min-height: 44px; }
+.mobile-mode .topbar { height: 44px; padding: 0 12px; }
+.mobile-mode .window-tools { gap: 3px; }
+.mobile-mode .icon-button { width: 44px; height: 44px; font-size: 19px; }
+.mobile-mode .move-handle,
+.mobile-mode .zoom-label,
+.mobile-mode .toolbar-divider,
+.mobile-mode .window-tools > button[aria-label="取消置顶"],
+.mobile-mode .window-tools > button[aria-label="置顶"],
+.mobile-mode .resize-handle,
+.mobile-mode .desktop-layout-setting { display: none; }
+.mobile-mode .text-button { font-size: 12px; padding: 7px 10px; }
+.mobile-mode .web-fullscreen-button { padding-inline: 10px; font-size: 13px; }
+.mobile-mode .primary-button, .mobile-mode .secondary-button { font-size: 14px; padding: 9px 15px; }
+.mobile-mode.has-game .wordmark { display: none; }
+.mobile-mode.has-game .topbar { justify-content: flex-end; }
+.mobile-mode .room-strip { top: 0; left: 12px; gap: 4px; height: 44px; padding: 0; max-width: calc(100% - 182px); }
+.mobile-mode .room-code { min-width: 72px; }
+.mobile-mode .room-code b { font-size: 13px; letter-spacing: 1px; }
+.mobile-mode .room-code > span { display: none; }
+.mobile-mode .direction-label { margin-inline: 3px; }
+.mobile-mode .opponent { top: 52px; width: clamp(130px, 21%, 180px); }
+.mobile-mode .left-opponent { left: 12px; }
+.mobile-mode .right-opponent { right: 12px; }
+.mobile-mode .player-heading { gap: 7px; min-height: 56px; padding: 5px 7px; }
+.mobile-mode .avatar-button { width: 44px; height: 44px; }
+.mobile-mode .player-heading strong { font-size: 12px; }
+.mobile-mode .player-heading div > span { font-size: 10px; margin-top: 3px; overflow: hidden; text-overflow: ellipsis; }
+.mobile-mode .remaining { font-size: 22px; flex-shrink: 0; }
+.mobile-mode .remaining small { display: none; }
+.mobile-mode .target-use { top: 62px; padding: 7px 14px; }
+.mobile-mode .opponent-detail { top: 62px; left: 0; }
+.mobile-mode .table-center { top: 60px; left: 23%; right: 23%; height: calc(100% - 274px); min-height: 96px; }
+.mobile-mode .center-context { top: -5px; gap: 9px; padding: 3px 8px; font-size: 11px; }
+.mobile-mode .bottom-cards { top: 24px; padding: 0; gap: 5px; font-size: 10px; }
+.mobile-mode .bottom-cards > span:first-child { display: none; }
+.mobile-mode .empty-center { margin-top: 22px; padding: 5px 8px; }
+.mobile-mode .empty-center h2 { font-size: 13px; }
+.mobile-mode .played-group { max-width: 100%; margin-top: 25px; }
+.mobile-mode .played-by { font-size: 11px; margin-bottom: 5px; }
+.mobile-mode .played-cards { width: 100%; }
+.mobile-mode .played-cards > div { margin-left: calc(var(--played-step) - 42px); }
+.mobile-mode .played-cards > div:first-child { margin-left: 0; }
+.mobile-mode .playing-card.small { width: 42px; height: 62px; }
+.mobile-mode .small .card-corner { top: 5px; left: 5px; gap: 3px; }
+.mobile-mode .small .card-corner b { font-size: 18px; }
+.mobile-mode .small .card-corner i { font-size: 12px; }
+.mobile-mode .waiting-panel, .mobile-mode .bidding-panel { width: min(100%, 440px); padding: 9px; margin-top: 25px; }
+.mobile-mode .waiting-panel h2, .mobile-mode .bidding-panel h2 { margin-bottom: 8px; font-size: 13px; }
+.mobile-mode .lobby-actions { margin-top: 0; gap: 6px; }
+.mobile-mode .lobby-actions button { padding-inline: 10px; font-size: 12px; }
+.mobile-mode .practice-button { margin-top: 0; min-height: 36px; }
+.mobile-mode .bottom-backs { display: none; }
+.mobile-mode .bid-actions { gap: 5px; }
+.mobile-mode .bid-actions button { padding-inline: 12px; }
+.mobile-mode .own-area { top: auto; bottom: 74px; left: 12px; right: 12px; height: 140px; }
+.mobile-mode .own-heading { max-width: calc(100% - 235px); height: 44px; gap: 6px; padding-inline: 7px; font-size: 11px; }
+.mobile-mode .own-heading strong { max-width: 90px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mobile-mode .play-controls { top: 0; min-height: 44px; gap: 6px; }
+.mobile-mode .play-controls button { min-width: 66px; min-height: 44px; }
+.mobile-mode .own-hand { top: 44px; left: 28px; right: 28px; min-height: 96px; height: 96px; padding-top: 17px; overflow-x: auto; overflow-y: hidden; justify-content: safe center; scrollbar-width: none; -webkit-touch-callout: none; }
+.mobile-mode .own-hand::-webkit-scrollbar { display: none; }
+.mobile-mode .own-hand .playing-card { width: 56px; height: 78px; margin-left: calc(var(--hand-step) - 56px); border-radius: 5px; }
+.mobile-mode .own-hand .playing-card:first-child { margin-left: 0; }
+.mobile-mode .own-hand .card-corner { top: 6px; left: 5px; gap: 4px; }
+.mobile-mode .own-hand .card-corner b { font-size: 22px; }
+.mobile-mode .own-hand .card-corner i { font-size: 15px; }
+.mobile-mode .hand-scroll-controls { display: flex; justify-content: space-between; position: absolute; left: -8px; right: -8px; top: 55px; pointer-events: none; }
+.mobile-mode .hand-scroll-controls button { width: 36px; height: 70px; padding: 0; color: #b6c5d6; background: #1e2630; border: 1px solid #445164; border-radius: 5px; pointer-events: auto; }
+.mobile-mode .skill-zone { top: auto; bottom: 8px; left: 12px; right: 12px; }
+.mobile-mode .skill-zone-heading { gap: 5px; margin-bottom: 4px; height: 18px; }
+.mobile-mode .skill-zone-heading > span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mobile-mode .skill-row { min-height: 44px; gap: 6px; }
+.mobile-mode .skill-card { height: 44px; min-width: 0; padding: 8px 11px; }
+.mobile-mode .skill-card strong { font-size: 12px; white-space: nowrap; }
+.mobile-mode .skill-phase-buttons { gap: 4px; }
+.mobile-mode .skill-phase-buttons button { min-height: 44px; padding: 8px 12px; font-size: 12px; }
+.mobile-mode .skill-tooltip { display: none; }
+.mobile-mode .mobile-skill-description { position: absolute; top: 100px; left: 24%; right: 24%; z-index: 36; padding: 7px 10px; background: #202731; border: 1px solid #607186; border-radius: 6px; pointer-events: none; }
+.mobile-mode .mobile-skill-description strong { font-size: 12px; color: #d4deea; }
+.mobile-mode .mobile-skill-description p { margin-top: 3px; font-size: 11px; line-height: 1.55; color: #afbed0; }
+.mobile-mode .status-toast { top: 45px; min-width: 0; width: min(90%, 480px); max-width: 90%; font-size: 12px; padding: 7px 10px; }
+.mobile-mode .status-toast > button { flex-shrink: 0; min-width: 36px; }
+.mobile-mode .modal-backdrop { position: absolute; inset: 0; padding: 10px; background: #080c12b8; z-index: 100; }
+.mobile-mode .modal { max-width: 100%; max-height: 100%; overscroll-behavior: contain; }
+.mobile-mode .modal { width: min(100%, 540px); max-height: 100%; padding: 18px 20px; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
+.mobile-mode .modal-close { top: 0; right: 0; width: 44px; height: 44px; }
+.mobile-mode .modal h2 { padding-right: 20px; font-size: 18px; }
+.mobile-mode .modal p, .mobile-mode .history-list li, .mobile-mode .help-skill-list p { font-size: 12px; line-height: 1.7; }
+.mobile-mode label { font-size: 13px; }
+.mobile-mode input:not([type=range]):not([type=checkbox]) { min-height: 44px; font-size: 16px; }
+.mobile-mode input[type=range] { min-height: 32px; }
+.mobile-mode .chat-menu { left: auto; right: -48px; top: 44px; width: 275px; max-height: calc(100dvh - 70px); overflow: auto; overscroll-behavior: contain; }
+.mobile-mode .chat-menu-heading button { width: 36px; }
+.mobile-mode .chat-phrase { font-size: 13px; min-height: 44px; padding: 9px 8px; }
+.mobile-mode .chat-bubble { max-width: 220px; padding: 6px 9px; }
+.mobile-mode .chat-bubble p { font-size: 12px; }
+.mobile-mode .chat-bubble.left-bubble { left: 12px; top: 112px; }
+.mobile-mode .chat-bubble.right-bubble { right: 12px; top: 112px; }
+.mobile-mode .chat-bubble.self-bubble { left: 12px; top: auto; bottom: 214px; }
+.mobile-mode .peek-inline { top: 114px; left: 12px; width: 174px; }
+.mobile-mode .peek-inline .text-button { width: 36px; }
+.mobile-mode.in-lobby .table-shell { overflow-y: auto; overscroll-behavior: contain; }
+.mobile-mode .welcome-layout { width: min(100% - 24px, 380px); margin: 8px auto 20px; }
+.mobile-mode .room-panel { padding: 16px 20px; }
+.mobile-mode .panel-title h2 { margin-top: 4px; font-size: 23px; }
+.mobile-mode .panel-title p { font-size: 13px; }
+.mobile-mode .segmented { margin: 14px 0; }
+.mobile-mode .segmented button { font-size: 14px; }
+.mobile-mode .server-link { min-height: 44px; }
+.mobile-mode .quiet-note { font-size: 11px; }
+
+@media (orientation: landscape) and (max-height: 500px) {
+  .mobile-mode.in-lobby .welcome-layout { width: min(100% - 40px, 660px); margin-top: 0; }
+  .mobile-mode .room-panel { display: grid; grid-template-columns: 1fr 1fr; column-gap: 20px; padding: 12px 18px; }
+  .mobile-mode .panel-title { grid-column: 1; grid-row: 1 / 3; }
+  .mobile-mode .tiny-suits { display: none; }
+  .mobile-mode .segmented { grid-column: 2; margin: 0 0 8px; }
+  .mobile-mode .room-panel > label { min-width: 0; }
+  .mobile-mode .room-panel input { margin: 4px 0 8px; }
+  .mobile-mode .enter-button { align-self: end; margin-bottom: 8px; }
+  .mobile-mode .server-link { margin: 0; }
+  .mobile-mode .quiet-note { margin: 0; align-self: center; }
+}
+@media (orientation: portrait) {
+  .mobile-mode .portrait-hint { position: absolute; top: 96px; left: 12px; right: 12px; height: 28px; display: flex; align-items: center; justify-content: center; gap: 8px; color: #a7b6c9; font-size: 12px; }
+  .mobile-mode .portrait-hint svg { width: 21px; height: 21px; stroke: currentColor; stroke-width: 1.5; fill: none; }
+  .mobile-mode .room-strip { top: 44px; left: 12px; right: 12px; max-width: none; justify-content: space-between; }
+  .mobile-mode.has-game .wordmark { display: block; }
+  .mobile-mode.has-game .topbar { justify-content: space-between; }
+  .mobile-mode .wordmark > div, .mobile-mode .wordmark .brand-mark { display: none; }
+  .mobile-mode .opponent { top: 136px; width: calc(50% - 20px); }
+  .mobile-mode .table-center { top: 226px; left: 16px; right: 16px; height: calc(100% - 502px); min-height: 105px; }
+  .mobile-mode .bottom-cards { top: 203px; }
+  .mobile-mode .own-area { bottom: 116px; height: 154px; }
+  .mobile-mode .own-heading { max-width: none; height: 30px; }
+  .mobile-mode .play-controls { top: -50px; }
+  .mobile-mode .own-hand { top: 30px; height: 124px; min-height: 124px; }
+  .mobile-mode .own-hand .playing-card { height: 104px; }
+  .mobile-mode .skill-row { flex-wrap: wrap; }
+  .mobile-mode .skill-card { flex: 1 1 auto; }
+  .mobile-mode .skill-phase-buttons { flex: 1 0 auto; justify-content: flex-end; }
+  .mobile-mode .skill-zone { max-height: 108px; }
+  .mobile-mode .mobile-skill-description { top: 231px; left: 20px; right: 20px; max-height: none; }
+  .mobile-mode .chat-menu { right: -40px; }
+  .mobile-mode .chat-bubble.left-bubble, .mobile-mode .chat-bubble.right-bubble { top: 195px; }
+  .mobile-mode .chat-bubble.self-bubble { bottom: 320px; }
+  .mobile-mode .peek-inline { top: 212px; }
+}
+@media (orientation: landscape) and (max-height: 350px) {
+  .mobile-mode .opponent { top: 45px; }
+  .mobile-mode .player-heading { min-height: 48px; padding-block: 1px; }
+  .mobile-mode .table-center { top: 48px; height: calc(100% - 242px); min-height: 58px; }
+  .mobile-mode .bottom-cards { top: 23px; }
+  .mobile-mode .own-area { height: 114px; bottom: 72px; }
+  .mobile-mode .own-hand { height: 70px; min-height: 70px; }
+  .mobile-mode .own-hand .playing-card { height: 52px; }
+  .mobile-mode .own-hand .card-corner { top: 4px; gap: 2px; }
+  .mobile-mode .own-hand .card-corner b { font-size: 20px; }
+  .mobile-mode .own-hand .card-corner i { font-size: 12px; }
+  .mobile-mode .hand-scroll-controls { top: 45px; }
+  .mobile-mode .hand-scroll-controls button { height: 68px; }
+  .mobile-mode .mobile-skill-description { top: 77px; max-height: none; padding: 5px 8px; }
+  .mobile-mode .mobile-skill-description p { font-size: 10px; line-height: 1.4; }
+  .mobile-mode .empty-center { margin-top: 18px; }
+  .mobile-mode .played-group { margin-top: 18px; }
+  .mobile-mode .playing-card.small { height: 46px; }
+  .mobile-mode .small .card-corner { top: 3px; gap: 2px; }
+  .mobile-mode .small .card-corner b { font-size: 16px; }
+  .mobile-mode .small .card-corner i { font-size: 11px; }
+}
