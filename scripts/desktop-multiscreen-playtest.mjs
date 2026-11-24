@@ -49,7 +49,7 @@ try {
   const left = Math.min(...displays.map(display => display.bounds.x)), top = Math.min(...displays.map(display => display.bounds.y));
   const right = Math.max(...displays.map(display => display.bounds.x + display.bounds.width)), bottom = Math.max(...displays.map(display => display.bounds.y + display.bounds.height));
   assert.deepEqual(report.native.bounds, { x: left, y: top, width: right - left, height: bottom - top });
-  report.checks.push('native window exactly covers the union of real display bounds, including negative origins');
+  report.checks.push('native window exactly covers the union of all connected physical displays');
   report.layout = await page.evaluate(() => window.desktop.info());
   assert.deepEqual(report.layout.layout.bounds, report.native.bounds);
   const primary = displays.find(display => display.id === report.native.primaryId);
