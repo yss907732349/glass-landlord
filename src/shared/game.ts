@@ -1,6 +1,7 @@
 import { makeDeck, sortCards } from './cards.ts';
 import { beats, classifyAgainst } from './rules.ts';
 import { getSkill, SKILLS } from './skills.ts';
+import { QUICK_CHATS } from './chat.ts';
 import type { Card, GameAction, GameEvent, GameView, Phase, PlayedCards, SkillCard } from './types.ts';
 
 interface Player {
@@ -38,6 +39,7 @@ export class Game {
   version = 0;
   private pausedRemaining = 0;
   private discardResumeRemaining: number | null = null;
+  private lastChatAt = new Map<string, number>();
   private randomSource?: () => number;
   private clock: () => number;
 
@@ -127,6 +129,7 @@ export class Game {
   removePlayer(id: string): void {
     const player = this.getPlayer(id);
     this.players = this.players.filter(item => item.id !== id);
+    this.lastChatAt.delete(id);
     if (this.hostId === id) this.hostId = this.players[0]?.id ?? '';
     if (this.phase !== 'lobby') { this.reset(); this.log('有人离开，牌局已结束，回到准备房间。'); }
     this.log(`${player.name} 离开了房间。`); this.version++;
@@ -242,6 +245,17 @@ export class Game {
   act(id: string, action: GameAction): void {
     const player = this.getPlayer(id);
     if (!action || typeof action.type !== 'string') throw new Error('操作格式不正确。');
+    if (action.type === 'chat') {
+      if (!player.connected) throw new Error('重新连接房间后才能发送聊天。');
+      if (Object.keys(action).some(key => key !== 'type' && key !== 'phraseId') || !Number.isInteger(action.phraseId) || action.phraseId < 0 || action.phraseId >= QUICK_CHATS.length) throw new Error('请选择一条有效的快捷聊天。');
+      const now = this.clock();
+      const last = this.lastChatAt.get(id);
+      if (last !== undefined && now - last < 3000) throw new Error('聊天太快，请稍等3秒。');
+      this.lastChatAt.set(id, now);
+      this.event({ type: 'chat', actorId: id, phraseId: action.phraseId });
+      this.version++;
+      return;
+    }
     if (this.paused) throw new Error('有人掉线，等待重新连接后继续。');
     switch (action.type) {
       case 'ready':
@@ -342,7 +356,7 @@ export class Game {
       lastActorId: this.lastActorId, passCount: this.passCount, trick: this.trick, multiplier: this.multiplier, bidMax: this.bidMax,
       skillActorId: null, skillOrder: [], skillUsed: 0, skillBudget: 0,
       mustDiscard: this.excess(self), logs: this.logs, events: this.events, privatePeek: self.peek,
-      winner: this.winner, winnerId: this.winnerId, deadline: this.deadline, paused: this.paused, version: this.version,
+      winner: this.winner, winnerId: this.winnerId, deadline: this.deadline, paused: this.paused, version: this.version, capabilities: ['quick-chat'],
     });
   }
 }

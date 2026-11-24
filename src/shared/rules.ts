@@ -110,6 +110,53 @@ export function classifyAgainst(cards: Card[], previous: Combination | null, wil
   return choices.find(next => beats(next, previous)) ?? null;
 }
 
+export interface WildPlayOption {
+  combination: Combination;
+  wildAs: Record<string, number>;
+  /** Sorted point values for the entire selected play, after substitutions. */
+  effectiveRanks: number[];
+}
+
+/**
+ * Resolve a selected physical hand before asking the player to choose a shape.
+ * Wildcard identity does not affect strength, so assignments are nondecreasing
+ * over sorted wildcard IDs. Three wildcards require only C(14, 3) = 364
+ * assignments instead of all 12^3 identity permutations.
+ */
+export function resolveWildPlays(cards: Card[], previous: Combination | null): WildPlayOption[] {
+  if (!cards.length || new Set(cards.map(card => card.id)).size !== cards.length) return [];
+  const wildcards = cards.filter(card => card.wild).sort((a, b) => a.id.localeCompare(b.id));
+  if (wildcards.length > 3) return [];
+  const options: WildPlayOption[] = [];
+  const seen = new Set<string>();
+  const declarations: Record<string, number> = {};
+  const collect = () => {
+    const ranks = effectiveRanks(cards, declarations);
+    if (!ranks) return;
+    // The wire protocol sends substitutions, not an explicit shape. Retain the
+    // same reading the server will choose for this declaration, rather than
+    // presenting another airplane interpretation it cannot select explicitly.
+    const candidate = classifyAgainst(cards, previous, declarations);
+    if (!candidate) return;
+    const key = `${candidate.type}:${candidate.rank}:${candidate.length}:${candidate.size}:${ranks.join(',')}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    options.push({ combination: candidate, wildAs: { ...declarations }, effectiveRanks: ranks });
+  };
+  const assign = (index: number, minimum: number): void => {
+    if (index === wildcards.length) { collect(); return; }
+    for (let rank = minimum; rank <= 14; rank++) {
+      declarations[wildcards[index].id] = rank;
+      assign(index + 1, rank);
+    }
+  };
+  if (cards.length === 1 && wildcards.length === 1) {
+    declarations[wildcards[0].id] = 3;
+    collect();
+  } else assign(0, 3);
+  return options;
+}
+
 interface Selection { cards: Card[]; wildAs: Record<string, number> }
 
 /**

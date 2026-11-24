@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Game } from '../src/shared/game.ts';
 import { SKILLS } from '../src/shared/skills.ts';
+import { QUICK_CHATS } from '../src/shared/chat.ts';
 import { findHint } from '../src/shared/rules.ts';
 import type { Card, GameAction, SkillKind } from '../src/shared/types.ts';
 
@@ -26,6 +27,50 @@ function stage(kind: SkillKind, actor = 'a'): Game {
 
 test('skill weights total 100 and exactly eleven effects are registered', () => {
   assert.equal(SKILLS.length, 11); assert.equal(SKILLS.reduce((sum, skill) => sum + skill.weight, 0), 100);
+});
+
+test('quick chat preserves the five exact fixed phrases and never accepts arbitrary text or a forged actor', () => {
+  assert.deepEqual(QUICK_CHATS, ['快点吧我等到花儿也谢了', '共三小你打的几把牌', '给阿姨倒一杯卡布基诺', '你好机车啊', '你还能13张牌把我秒了？']);
+  const game = playing();
+  const before = game.view('a');
+  for (const phraseId of [-1, 5, 1.5, NaN]) assert.throws(() => game.act('a', { type: 'chat', phraseId }), /有效的快捷聊天/);
+  assert.throws(() => game.act('a', { type: 'chat', phraseId: 0, text: 'arbitrary text' } as unknown as GameAction), /有效的快捷聊天/);
+  assert.throws(() => game.act('a', { type: 'chat', phraseId: 0, actorId: 'b' } as unknown as GameAction), /有效的快捷聊天/);
+  assert.deepEqual(game.view('a'), before);
+  game.act('a', { type: 'chat', phraseId: 4 });
+  assert.equal(game.events.at(-1)?.actorId, 'a'); assert.equal(game.events.at(-1)?.phraseId, 4);
+  assert.deepEqual(Object.keys(game.events.at(-1)!).sort(), ['actorId', 'at', 'id', 'phraseId', 'type']);
+});
+
+test('quick chat is allowed in every room phase and off-turn without changing game progress or logs', () => {
+  for (const phase of ['lobby', 'bidding', 'playing', 'skill_discard', 'finished'] as const) {
+    const game = playing(); game.phase = phase;
+    const { events: _events, version: _version, ...before } = game.view('b');
+    game.act('b', { type: 'chat', phraseId: 0 });
+    const { events, version, ...after } = game.view('b');
+    assert.deepEqual(after, before, `chat changed the ${phase} state`);
+    assert.equal(version, _version + 1); assert.equal(events.at(-1)?.type, 'chat');
+    assert.equal(events.at(-1)?.actorId, 'b'); assert.equal(game.turnId, 'a');
+    assert.deepEqual(game.view('a').events, game.view('c').events);
+    assert.deepEqual(game.view('a').capabilities, ['quick-chat']);
+  }
+});
+
+test('quick chat cooldown is three seconds per player, including a first message at timestamp zero', () => {
+  let now = 0; const game = new Game('chat-clock', { now: () => now });
+  for (const id of ['a', 'b', 'c']) game.addPlayer(id, id);
+  game.act('a', { type: 'chat', phraseId: 0 }); game.act('b', { type: 'chat', phraseId: 1 });
+  const before = game.view('a');
+  now = 2999; assert.throws(() => game.act('a', { type: 'chat', phraseId: 2 }), /3秒/); assert.deepEqual(game.view('a'), before);
+  now = 3000; game.act('a', { type: 'chat', phraseId: 2 }); assert.equal(game.events.at(-1)?.phraseId, 2);
+});
+
+test('connected players can chat during disconnect pause while a disconnected actor cannot', () => {
+  const game = playing(); game.setConnected('c', false);
+  assert.equal(game.paused, true); const beforeTurn = game.turnId; const beforeDeadline = game.deadline;
+  game.act('b', { type: 'chat', phraseId: 3 });
+  assert.equal(game.paused, true); assert.equal(game.turnId, beforeTurn); assert.equal(game.deadline, beforeDeadline);
+  const before = game.view('a'); assert.throws(() => game.act('c', { type: 'chat', phraseId: 0 }), /重新连接/); assert.deepEqual(game.view('a'), before);
 });
 
 test('three ready players start with private 17-card hands and hidden bottom; winning bid gets 20', () => {

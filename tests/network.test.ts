@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { WebSocket } from 'ws';
-import { createGameServer } from '../server/index.ts';
+import { WebSocket, WebSocketServer } from 'ws';
+import type { Socket } from 'node:net';
+import { createGameServer, sendRoomMessage } from '../server/index.ts';
 import { readyBots, runBotTurn } from '../server/bots.ts';
 import { Game } from '../src/shared/game.ts';
 import { classify } from '../src/shared/rules.ts';
@@ -176,15 +177,96 @@ test('host can fill two bot seats, and bots take turns without seeing other hand
   assert.equal(botPlayed.hand.length, 17);
 });
 
+test('three real websocket clients receive fixed chat in lobby, off-turn and while paused', async t => {
+  const app = await createGameServer({ port: 0, host: '127.0.0.1' });
+  const clients = ['房主', '朋友甲', '朋友乙'].map(() => new Client(`ws://127.0.0.1:${app.port}/ws`));
+  t.after(async () => { await Promise.all(clients.map(client => client.close())); await app.close(); });
+  const [a, b, c] = clients;
+  await Promise.all(clients.map(client => client.opened()));
+  a.send({ type: 'create', name: '房主', password: 'chat-room' });
+  const host = await a.receive(isJoined); await a.receive(isState);
+  b.send({ type: 'join', code: host.code, name: '朋友甲', password: 'chat-room' }); await b.receive(isJoined); await b.receive(isState);
+  c.send({ type: 'join', code: host.code, name: '朋友乙', password: 'chat-room' }); await c.receive(isJoined); await c.receive(isState);
+  for (const client of clients) await client.receive((item): item is Extract<ServerMessage, { type: 'state' }> => item.type === 'state' && item.state.players.length === 3);
+  const offsets = clients.map(client => client.messages.length);
+  const lobby = await b.act({ type: 'chat', phraseId: 1 });
+  const event = lobby.events.at(-1)!;
+  assert.equal(event.type, 'chat'); assert.equal(event.actorId, b.state.selfId); assert.equal(event.phraseId, 1);
+  for (const [index, client] of clients.entries()) {
+    const broadcast = await client.receive((item): item is Extract<ServerMessage, { type: 'state' }> => item.type === 'state' && item.state.events.some(chat => chat.id === event.id), offsets[index]);
+    assert.equal(broadcast.state.phase, 'lobby'); assert.equal(broadcast.state.turnId, null);
+    assert.deepEqual(broadcast.state.events.at(-1), event);
+    assert.ok(broadcast.state.capabilities?.includes('quick-chat'));
+  }
+  let before = b.messages.length;
+  b.send({ type: 'action', action: { type: 'chat', phraseId: 2 } });
+  assert.match((await b.receive(isError, before)).message, /3秒/);
+  before = b.messages.length;
+  b.send({ type: 'action', action: { type: 'chat', phraseId: 0, actorId: host.playerId, text: 'forged text' } as unknown as GameAction });
+  assert.match((await b.receive(isError, before)).message, /快捷聊天/);
+
+  for (const client of clients) await client.act({ type: 'ready', ready: true });
+  await a.receive((item): item is Extract<ServerMessage, { type: 'state' }> => item.type === 'state' && item.state.players.every(player => player.ready));
+  const started = await a.act({ type: 'start' });
+  for (const client of clients) await client.receive((item): item is Extract<ServerMessage, { type: 'state' }> => item.type === 'state' && item.state.version >= started.version);
+  const offTurn = c.state.selfId !== started.turnId ? c : a;
+  const chatted = await offTurn.act({ type: 'chat', phraseId: 3 });
+  assert.equal(chatted.phase, 'bidding'); assert.equal(chatted.turnId, started.turnId); assert.equal(chatted.deadline, started.deadline); assert.equal(chatted.hand.length, 17);
+  assert.equal(chatted.events.at(-1)?.actorId, offTurn.state.selfId);
+  const pauseOffsets = clients.map(client => client.messages.length);
+  await b.close();
+  const speaker = offTurn === a ? c : a;
+  await speaker.receive((item): item is Extract<ServerMessage, { type: 'state' }> => item.type === 'state' && item.state.paused, pauseOffsets[clients.indexOf(speaker)]);
+  const pausedChat = await speaker.act({ type: 'chat', phraseId: 4 });
+  assert.equal(pausedChat.paused, true); assert.equal(pausedChat.deadline, null); assert.equal(pausedChat.turnId, started.turnId);
+  assert.equal(pausedChat.events.at(-1)?.phraseId, 4);
+  assert.deepEqual(Object.keys(pausedChat.events.at(-1)!).sort(), ['actorId', 'at', 'id', 'phraseId', 'type']);
+});
+
+test('a real non-reading websocket is disconnected before outbound snapshots queue beyond one MiB', async t => {
+  const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+  await new Promise<void>(resolve => server.once('listening', resolve));
+  const address = server.address(); assert.ok(address && typeof address !== 'string');
+  const connected = new Promise<WebSocket>(resolve => server.once('connection', resolve));
+  const client = new WebSocket(`ws://127.0.0.1:${address.port}`);
+  client.on('error', () => {});
+  t.after(async () => { client.terminate(); for (const socket of server.clients) socket.terminate(); await new Promise<void>(resolve => server.close(() => resolve())); });
+  await new Promise<void>((resolve, reject) => { client.once('open', resolve); client.once('error', reject); });
+  const peer = await connected;
+  (client as unknown as { _socket: Socket })._socket.pause();
+  const message = { type: 'error' as const, message: 'x'.repeat(32 * 1024) };
+  let maximumPending = 0, sent = 0;
+  while (peer.readyState === WebSocket.OPEN && sent < 1000) {
+    sendRoomMessage(peer, message); sent++;
+    maximumPending = Math.max(maximumPending, peer.bufferedAmount);
+  }
+  assert.notEqual(peer.readyState, WebSocket.OPEN, 'slow clients must not keep accumulating server messages');
+  assert.ok(sent < 1000); assert.ok(maximumPending <= 1024 * 1024, `queued ${maximumPending} bytes`);
+});
+
+test('idle room ticks read public progress without cloning private views', async t => {
+  const app = await createGameServer({ port: 0, host: '127.0.0.1' });
+  const client = new Client(`ws://127.0.0.1:${app.port}/ws`);
+  const original = Game.prototype.view;
+  let code = '', reads = 0;
+  Game.prototype.view = function (id) { if (this.code === code) reads++; return original.call(this, id); };
+  t.after(async () => { Game.prototype.view = original; await client.close(); await app.close(); });
+  await client.opened(); client.send({ type: 'create', name: '空闲内存验收', password: 'idle-room' });
+  const joined = await client.receive(isJoined); await client.receive(isState); code = joined.code; reads = 0;
+  await new Promise(resolve => setTimeout(resolve, 1600));
+  assert.equal(reads, 0, 'unchanged rooms need no private hand/event deep clones during background ticks');
+});
+
 test('health endpoint and websocket origin checks', async t => {
   const app = await createGameServer({ port: 0, host: '127.0.0.1' });
   t.after(() => app.close());
   const response = await fetch(`http://127.0.0.1:${app.port}/health`);
   assert.equal(response.status, 200);
-  const health = await response.json() as { ok: boolean; version: string; protocol: string };
+  const health = await response.json() as { ok: boolean; version: string; protocol: string; capabilities: string[] };
   assert.equal(health.ok, true);
   assert.match(health.version, /^\d+\.\d+\.\d+/);
   assert.equal(health.protocol, 'turn-skills-v2');
+  assert.deepEqual(health.capabilities, ['quick-chat']);
   assert.equal((await fetch(`http://127.0.0.1:${app.port}/src/shared/game.ts`)).status, 404);
   const socket = new WebSocket(`ws://127.0.0.1:${app.port}/ws`, { origin: 'https://untrusted.example' });
   const status = await new Promise<number>((resolve, reject) => {

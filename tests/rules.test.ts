@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { makeDeck, rankLabel, sortCards, suitLabel } from '../src/shared/cards.ts';
-import { beats, classify, classifyAgainst, classifyAll, findHint } from '../src/shared/rules.ts';
+import { beats, classify, classifyAgainst, classifyAll, findHint, resolveWildPlays } from '../src/shared/rules.ts';
 import type { Card, Combination } from '../src/shared/types.ts';
 
 let sequence = 0;
@@ -161,4 +161,89 @@ test('deterministic randomized hands never produce illegal or non-owned hints', 
     const selected = hand.filter(c => hint.cardIds.includes(c.id));
     assert.ok(classifyAgainst(selected, before, hint.wildAs));
   }
+});
+
+test('automatic wildcard resolution returns a unique forced replacement and single wildcard remains 3', () => {
+  const w = wild();
+  const unique = resolveWildPlays([...cards([3, 4, 6, 7]), w], null);
+  assert.equal(unique.length, 1); assert.equal(unique[0].wildAs[w.id], 5);
+  assert.equal(unique[0].combination.type, 'straight'); assert.deepEqual(unique[0].effectiveRanks, [3, 4, 5, 6, 7]);
+  const single = resolveWildPlays([w], null);
+  assert.equal(single.length, 1); assert.equal(single[0].wildAs[w.id], 3); assert.equal(single[0].combination.rank, 3);
+  assert.deepEqual(resolveWildPlays([w], shape([3])), []);
+});
+
+test('4567 plus wildcard offers both straight endpoints, filtering before prompting when following', () => {
+  const w = wild(); const selection = [...cards([4, 5, 6, 7]), w];
+  const choices = resolveWildPlays(selection, null);
+  assert.equal(choices.length, 2);
+  assert.deepEqual(choices.map(option => option.effectiveRanks), [[3, 4, 5, 6, 7], [4, 5, 6, 7, 8]]);
+  const follows = resolveWildPlays(selection, shape([3, 4, 5, 6, 7]));
+  assert.equal(follows.length, 1); assert.equal(follows[0].wildAs[w.id], 8);
+  assert.deepEqual(resolveWildPlays(selection, shape([4, 5, 6, 7, 8])), []);
+  assert.deepEqual(resolveWildPlays(selection, shape([3, 4, 5, 6, 7, 8])), []);
+});
+
+test('multiple wildcard identity permutations collapse but genuinely different wing values remain selectable', () => {
+  const w1 = wild(); const w2 = wild();
+  const selection = [...cards([3, 3]), w2, w1];
+  const choices = resolveWildPlays(selection, null);
+  assert.equal(choices.length, 11);
+  assert.ok(choices.every(option => option.combination.type === 'triple_single' && option.combination.rank === 3));
+  assert.deepEqual(choices.map(option => option.effectiveRanks.at(-1)), Array.from({ length: 11 }, (_, i) => i + 4));
+  const keys = choices.map(option => `${option.combination.type}:${option.effectiveRanks.join(',')}`);
+  assert.equal(new Set(keys).size, keys.length);
+  const wildcardIds = [w1.id, w2.id].sort((a, b) => a.localeCompare(b));
+  assert.ok(choices.every(option => option.wildAs[wildcardIds[0]] <= option.wildAs[wildcardIds[1]]));
+  assert.deepEqual(resolveWildPlays([...selection].reverse(), null), choices);
+});
+
+test('one selected group can resolve to different legal combination types, each remaining server-verifiable', () => {
+  const w1 = wild(); const w2 = wild(); const selection = [...cards([3, 3, 4, 4]), w1, w2];
+  const choices = resolveWildPlays(selection, null);
+  assert.ok(choices.some(option => option.combination.type === 'pair_straight' && option.effectiveRanks.join(',') === '3,3,4,4,5,5'));
+  assert.ok(choices.some(option => option.combination.type === 'four_two' && option.combination.rank === 3));
+  assert.ok(choices.some(option => option.combination.type === 'four_two' && option.combination.rank === 4));
+  for (const option of choices) assert.deepEqual(classifyAgainst(selection, null, option.wildAs), option.combination);
+  const follows = resolveWildPlays(selection, shape([3, 3, 3, 3, 5, 6]));
+  assert.ok(follows.length > 0); assert.ok(follows.every(option => option.combination.type === 'four_two' && option.combination.rank > 3));
+});
+
+test('automatic choices match the exact server interpretation when one declaration has ambiguous airplane shapes', () => {
+  const w = wild(); const selection = [...cards([4, 4, 4, 5, 5, 5, 6, 6, 6, 7, 7]), w];
+  const options = resolveWildPlays(selection, null);
+  const asSeven = options.filter(option => option.wildAs[w.id] === 7);
+  assert.equal(asSeven.length, 1); assert.equal(asSeven[0].combination.type, 'plane');
+  const previous = shape([3, 3, 3, 4, 4, 4, 5, 5, 5, 8, 9, 10]);
+  const follows = resolveWildPlays(selection, previous);
+  assert.ok(follows.length > 0);
+  for (const option of follows) assert.deepEqual(option.combination, classifyAgainst(selection, previous, option.wildAs));
+  assert.equal(follows.find(option => option.wildAs[w.id] === 7)?.combination.type, 'plane_single');
+});
+
+test('automatic resolution preserves forbidden substitutions, bomb restrictions and invalid-input rejection', () => {
+  assert.deepEqual(resolveWildPlays([...cards([15]), wild()], null), []);
+  assert.deepEqual(resolveWildPlays([...cards([16]), wild()], null), []);
+  assert.deepEqual(resolveWildPlays([...cards([7, 7, 7]), wild()], shape([6, 6, 6, 6])), []);
+  assert.deepEqual(resolveWildPlays([...cards([11, 12, 13, 14]), wild()], null).map(option => option.effectiveRanks), [[10, 11, 12, 13, 14]]);
+  assert.deepEqual(resolveWildPlays([], null), []);
+  const same = wild(); assert.deepEqual(resolveWildPlays([same, same], null), []);
+  assert.deepEqual(resolveWildPlays([wild(), wild(), wild(), wild()], null), []);
+  const natural = resolveWildPlays(cards([8, 8, 8, 8]), shape([7, 7, 7, 7]));
+  assert.equal(natural.length, 1); assert.equal(natural[0].combination.type, 'bomb'); assert.deepEqual(natural[0].wildAs, {});
+  assert.deepEqual(resolveWildPlays(cards([3, 4]), null), []);
+});
+
+test('three wildcard resolutions stay bounded and preserve every legal distinct rank multiset', () => {
+  const selection = [wild(), wild(), wild()];
+  const options = resolveWildPlays(selection, null);
+  assert.equal(options.length, 12); assert.ok(options.every(option => option.combination.type === 'triple'));
+  assert.deepEqual(options.map(option => option.combination.rank), Array.from({ length: 12 }, (_, i) => i + 3));
+  const larger = [...cards([3, 3, 4, 4, 5, 6, 7]), ...selection];
+  const start = performance.now();
+  for (let i = 0; i < 100; i++) {
+    const result = resolveWildPlays(larger, null);
+    for (const option of result) assert.ok(classifyAgainst(larger, null, option.wildAs));
+  }
+  assert.ok(performance.now() - start < 3000, '100 worst-supported wildcard resolutions should finish within three seconds');
 });

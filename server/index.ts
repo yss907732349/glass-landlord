@@ -11,6 +11,7 @@ import packageInfo from '../package.json' with { type: 'json' };
 
 const scrypt = promisify(scryptCallback);
 const MAX_MESSAGE = 32 * 1024;
+const MAX_PENDING_SEND_BYTES = 1024 * 1024;
 const RECONNECT_MS = 180_000;
 const EMPTY_ROOM_MS = 30 * 60_000;
 const MIME: Record<string, string> = {
@@ -46,8 +47,15 @@ interface Connection {
   chain: Promise<void>;
 }
 
-function send(socket: WebSocket, message: ServerMessage) {
-  if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(message));
+/** Drop slow transports before their queued private snapshots can grow without bound. */
+export function sendRoomMessage(socket: WebSocket, message: ServerMessage) {
+  if (socket.readyState !== WebSocket.OPEN) return;
+  const payload = JSON.stringify(message);
+  if (socket.bufferedAmount + Buffer.byteLength(payload) > MAX_PENDING_SEND_BYTES) {
+    socket.terminate();
+    return;
+  }
+  socket.send(payload);
 }
 
 function cleanName(name: unknown): string {
@@ -113,7 +121,7 @@ export async function createGameServer(options: { port?: number; host?: string; 
     }
     if (pathname === '/health') {
       response.writeHead(200, { 'Content-Type': MIME['.json'], 'Cache-Control': 'no-store' });
-      response.end(request.method === 'HEAD' ? undefined : JSON.stringify({ ok: true, service: 'glass-landlord', version: packageInfo.version, protocol: 'turn-skills-v2', rooms: rooms.size }));
+      response.end(request.method === 'HEAD' ? undefined : JSON.stringify({ ok: true, service: 'glass-landlord', version: packageInfo.version, protocol: 'turn-skills-v2', capabilities: ['quick-chat'], rooms: rooms.size }));
       return;
     }
     if (pathname.includes('\0') || pathname.includes('\\')) { response.writeHead(400).end(); return; }
@@ -151,10 +159,9 @@ export async function createGameServer(options: { port?: number; host?: string; 
 
   function broadcast(room: Room) {
     for (const seat of room.seats.values()) {
-      if (seat.socket?.readyState === WebSocket.OPEN) send(seat.socket, { type: 'state', state: room.game.view(seat.id) });
+      if (seat.socket?.readyState === WebSocket.OPEN) sendRoomMessage(seat.socket, { type: 'state', state: room.game.view(seat.id) });
     }
-    const anySeat = room.seats.values().next().value as Seat | undefined;
-    if (anySeat) room.lastVersion = room.game.view(anySeat.id).version;
+    room.lastVersion = room.game.version;
   }
 
   function closeRoom(room: Room, message: string) {
@@ -162,7 +169,7 @@ export async function createGameServer(options: { port?: number; host?: string; 
     rooms.delete(room.code);
     for (const seat of room.seats.values()) {
       if (!seat.socket) continue;
-      send(seat.socket, { type: 'closed', message });
+      sendRoomMessage(seat.socket, { type: 'closed', message });
       const connection = connections.get(seat.socket);
       if (connection) { connection.room = null; connection.seatId = null; }
       seat.socket.close(1000, 'Room closed');
@@ -182,10 +189,10 @@ export async function createGameServer(options: { port?: number; host?: string; 
     if (oldSocket && oldSocket !== socket) {
       const previous = connections.get(oldSocket);
       if (previous) { previous.room = null; previous.seatId = null; }
-      send(oldSocket, { type: 'closed', message: '此座位已在另一个窗口恢复。' });
+      sendRoomMessage(oldSocket, { type: 'closed', message: '此座位已在另一个窗口恢复。' });
       oldSocket.close(1000, 'Session replaced');
     }
-    send(socket, { type: 'joined', code: room.code, token: seat.token, playerId: seat.id });
+    sendRoomMessage(socket, { type: 'joined', code: room.code, token: seat.token, playerId: seat.id });
     broadcast(room);
   }
 
@@ -203,7 +210,7 @@ export async function createGameServer(options: { port?: number; host?: string; 
     try { message = JSON.parse(raw); } catch { throw new Error('无法识别消息。'); }
     if (!message || typeof message !== 'object' || Array.isArray(message)) throw new Error('无法识别消息。');
     if (message.type === 'ping') {
-      if (typeof message.at === 'number' && Number.isFinite(message.at)) send(socket, { type: 'pong', at: message.at });
+      if (typeof message.at === 'number' && Number.isFinite(message.at)) sendRoomMessage(socket, { type: 'pong', at: message.at });
       return;
     }
     if (message.type === 'create') {
@@ -272,7 +279,7 @@ export async function createGameServer(options: { port?: number; host?: string; 
         if (!room.seats.size) rooms.delete(room.code);
         else broadcast(room);
       } else closeRoom(room, '有玩家离开，本局已结束，请重新创建房间。');
-      send(socket, { type: 'closed', message: '已离开房间。' });
+      sendRoomMessage(socket, { type: 'closed', message: '已离开房间。' });
       return;
     }
     if (message.type === 'action') {
@@ -308,13 +315,13 @@ export async function createGameServer(options: { port?: number; host?: string; 
       const now = Date.now();
       if (now - connection.windowAt > 1000) { connection.windowAt = now; connection.messages = 0; }
       if (++connection.messages > 30) {
-        send(socket, { type: 'error', message: '操作太快，请稍后再试。' });
+        sendRoomMessage(socket, { type: 'error', message: '操作太快，请稍后再试。' });
         if (connection.messages > 60) socket.close(1008, 'Rate limit');
         return;
       }
-      if (binary) { send(socket, { type: 'error', message: '只支持文字消息。' }); return; }
+      if (binary) { sendRoomMessage(socket, { type: 'error', message: '只支持文字消息。' }); return; }
       connection.chain = connection.chain.then(() => handle(socket, connection, data.toString())).catch(error => {
-        send(socket, { type: 'error', message: error instanceof Error ? error.message : '操作未完成，请重试。' });
+        sendRoomMessage(socket, { type: 'error', message: error instanceof Error ? error.message : '操作未完成，请重试。' });
       });
     });
     socket.on('close', () => {
@@ -345,12 +352,14 @@ export async function createGameServer(options: { port?: number; host?: string; 
       room.game.tick(now);
       if (now >= room.botNextAt) {
         room.botNextAt = now + 1400;
-        const firstView = room.game.view(room.seats.keys().next().value!);
-        if (!firstView.paused) {
+        if (!room.game.paused) {
           const bot = [...room.seats.values()].find(seat => {
             if (!seat.id.startsWith('bot-')) return false;
-            if (firstView.phase === 'skill_discard') return room.game.view(seat.id).mustDiscard > 0;
-            return ['bidding', 'playing'].includes(firstView.phase) && firstView.turnId === seat.id;
+            if (room.game.phase === 'skill_discard') {
+              const player = room.game.players.find(item => item.id === seat.id);
+              return !!player && player.skills.length > (seat.id === room.game.landlordId ? 3 : 2);
+            }
+            return ['bidding', 'playing'].includes(room.game.phase) && room.game.turnId === seat.id;
           });
           if (bot) {
             try { runBotTurn(room.game, bot.id); }
@@ -358,8 +367,7 @@ export async function createGameServer(options: { port?: number; host?: string; 
           }
         }
       }
-      const first = room.seats.values().next().value as Seat | undefined;
-      if (first && room.game.view(first.id).version !== room.lastVersion) broadcast(room);
+      if (room.game.version !== room.lastVersion) broadcast(room);
     }
     for (const [ip, entry] of attempts) if (now - entry.at > 60_000) attempts.delete(ip);
   }, 500);

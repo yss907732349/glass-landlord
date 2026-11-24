@@ -7,8 +7,8 @@ export interface PlayerView { id: string; name: string; connected: boolean; read
 export interface Combination { type: string; rank: number; length: number; size: number; label: string }
 export interface PlayedCards { playerId: string; cards: Card[]; combination: Combination; wildAs?: Record<string, number> }
 export interface GameEvent {
-  id: string; type: 'drawSkills' | 'discardSkills' | 'skill' | 'play' | 'pass';
-  actorId: string; targetId?: string; skillKind?: SkillKind; count?: number; at: number;
+  id: string; type: 'drawSkills' | 'discardSkills' | 'skill' | 'play' | 'pass' | 'chat';
+  actorId: string; targetId?: string; skillKind?: SkillKind; count?: number; phraseId?: number; at: number;
 }
 export interface GameView {
   code: string; selfId: string; hostId: string; phase: Phase; players: PlayerView[];
@@ -18,9 +18,10 @@ export interface GameView {
   skillActorId: string | null; skillOrder: string[]; skillUsed: number; skillBudget: number;
   mustDiscard: number; logs: string[]; privatePeek: Card[];
   winner: 'landlord' | 'farmers' | null; winnerId: string | null;
-  deadline: number | null; paused: boolean; version: number; events: GameEvent[];
+  deadline: number | null; paused: boolean; version: number; events: GameEvent[]; capabilities?: string[];
 }
 export type GameAction =
+  | { type: 'chat'; phraseId: number }
   | { type: 'fillBots' }
   | { type: 'ready'; ready: boolean }
   | { type: 'start' }
