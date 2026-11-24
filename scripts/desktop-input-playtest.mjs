@@ -66,7 +66,7 @@ try {
     const background = new BrowserWindow({ ...fixtureBounds, frame: false, show: false, backgroundColor: '#28303b', webPreferences: { contextIsolation: true } });
     globalThis.__inputBackground = background;
     await background.loadURL('data:text/html,<html><body style="margin:0;width:100vw;height:100vh;background:%2328303b;color:white">Isolated native input test window<script>window.clicks=[];addEventListener("click",e=>window.clicks.push({x:e.clientX,y:e.clientY}))</script></body></html>');
-    background.showInactive(); overlay.setAlwaysOnTop(false); overlay.setAlwaysOnTop(true, 'floating');
+    background.showInactive(); background.moveTop(); overlay.setAlwaysOnTop(false); overlay.setAlwaysOnTop(true, 'floating');
     return { version: app.getVersion(), bounds, fixtureBounds, overlay: overlay.getNativeWindowHandle().readBigUInt64LE().toString(), background: background.getNativeWindowHandle().readBigUInt64LE().toString(), displays: screen.getAllDisplays().map(display => display.bounds) };
   }, toolbar);
   assert.equal(report.native.version, expectedVersion); report.bounds = report.native.bounds;
@@ -136,7 +136,7 @@ try {
   const cropped = await page.evaluate(() => window.desktop.info()); assert.ok(cropped.frame.width < desktop.width);
   await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().find(window => window.id !== globalThis.__inputBackground.id).webContents.send('reset-layout')); await settled();
   await page.evaluate(async () => { const { layout } = await window.desktop.info(); if (layout.displays.length > 1) window.dispatchEvent(new CustomEvent('glass-display-layout', { detail: { ...layout, primary: layout.displays[1].workArea, previousBounds: layout.bounds, reset: true } })); }); await settled();
-  await app.evaluate(() => { globalThis.__inputBackground.setAlwaysOnTop(false); globalThis.__inputBackground.showInactive(); globalThis.__inputOverlay.setAlwaysOnTop(false); globalThis.__inputOverlay.setAlwaysOnTop(true, 'floating'); });
+  await app.evaluate(() => { globalThis.__inputBackground.setAlwaysOnTop(false); globalThis.__inputBackground.showInactive(); globalThis.__inputBackground.moveTop(); globalThis.__inputOverlay.setAlwaysOnTop(false); globalThis.__inputOverlay.setAlwaysOnTop(true, 'floating'); });
   await native([{ type: 'click', ...outside }]); await page.waitForTimeout(80); assert.equal((await backgroundClicks()).length, 1);
   report.checks.push('native drag crossing controls and leaving the original interface kept full-window capture until release, then restored outside desktop clicks');
   assert.deepEqual(report.errors, []);
@@ -147,5 +147,3 @@ finally {
   await app?.close().catch(() => {});
   await writeFile(path.join(output, `desktop-input-${label}-report.json`), JSON.stringify(report, null, 2)); console.log(JSON.stringify(report, null, 2));
 }
-
-
