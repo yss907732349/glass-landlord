@@ -271,7 +271,7 @@ test('health endpoint and websocket origin checks', async t => {
   assert.equal(health.ok, true);
   assert.match(health.version, /^\d+\.\d+\.\d+/);
   assert.equal(health.protocol, 'turn-skills-v2');
-  assert.deepEqual(health.capabilities, ['quick-chat', 'soft-bomb', 'turn-skill-limit']);
+  assert.deepEqual(health.capabilities, ['quick-chat', 'soft-bomb', 'turn-skill-limit', 'wild-two-no-single']);
   assert.equal((await fetch(`http://127.0.0.1:${app.port}/src/shared/game.ts`)).status, 404);
   const socket = new WebSocket(`ws://127.0.0.1:${app.port}/ws`, { origin: 'https://untrusted.example' });
   const status = await new Promise<number>((resolve, reject) => {
@@ -295,6 +295,20 @@ function botGame() {
   game.turnId = 'bot-a';
   return game;
 }
+
+test('a bot with only one wildcard hands an empty table to the next seat in either direction', () => {
+  for (const direction of [1, -1] as const) {
+    const game = botGame(); game.direction = direction;
+    const bot = game.players.find(player => player.id === 'bot-a')!;
+    const wild: Card = { id: 'bot-lone-wild', rank: 3, suit: 'W', wild: true };
+    bot.hand = [wild]; bot.skills = [];
+    runBotTurn(game, bot.id);
+    assert.equal(game.turnId, direction === 1 ? 'bot-b' : 'human');
+    assert.equal(game.currentPlay, null); assert.equal(game.passCount, 0); assert.equal(game.trick, 1);
+    assert.equal(game.phase, 'playing'); assert.equal(game.winnerId, null); assert.deepEqual(bot.hand, [wild]);
+    assert.equal(game.events.at(-1)?.type, 'pass'); assert.equal(game.events.at(-1)?.actorId, bot.id);
+  }
+});
 
 test('bot uses disruption against an opponent, skips illegal skills and handles identity', () => {
   const game = botGame();
@@ -433,4 +447,76 @@ test('three websocket clients receive a wildcard soft bomb and enforce hard-bomb
   assert.equal(game.version, hard.version);
   assert.equal(game.multiplier, 4);
   assert.equal(game.players.find(player => player.id === third.playerId)!.hand.length, 5);
+});
+
+
+test('three websocket clients agree on wildcard twos and reject single wildcards without spending the turn', async t => {
+  const app = await createGameServer({ port: 0, host: '127.0.0.1' });
+  const clients = Array.from({ length: 3 }, () => new Client(`ws://127.0.0.1:${app.port}/ws`));
+  const originalAddPlayer = Game.prototype.addPlayer;
+  let fixture: Game | undefined;
+  Game.prototype.addPlayer = function (id, name) {
+    originalAddPlayer.call(this, id, name);
+    if (name === '赖子2联机房主') fixture = this;
+  };
+  t.after(async () => { Game.prototype.addPlayer = originalAddPlayer; await Promise.all(clients.map(client => client.close())); await app.close(); });
+  const [a, b, c] = clients; await Promise.all(clients.map(client => client.opened()));
+  a.send({ type: 'create', name: '赖子2联机房主', password: 'wild-two-room' });
+  const host = await a.receive(isJoined); await a.receive(isState);
+  b.send({ type: 'join', name: '不能单出', code: host.code, password: 'wild-two-room' });
+  const friend = await b.receive(isJoined); await b.receive(isState);
+  c.send({ type: 'join', name: '赖子2软炸', code: host.code, password: 'wild-two-room' });
+  const third = await c.receive(isJoined); await c.receive(isState);
+  for (const client of clients) await client.receive((item): item is Extract<ServerMessage, { type: 'state' }> => item.type === 'state' && item.state.players.length === 3);
+  assert.ok(fixture); const game = fixture;
+  const natural = (id: string, rank: number): Card => ({ id, rank, suit: 'S' });
+  const wildcard = (id: string): Card => ({ id, rank: 3, suit: 'W', wild: true });
+  const aWild = wildcard('pair-two-wild'), bWild = wildcard('single-wild'), cWild = wildcard('bomb-two-wild');
+  const pair = [natural('natural-two', 15), aWild];
+  const bomb = [natural('bomb-two-a', 15), natural('bomb-two-b', 15), natural('bomb-two-c', 15), cWild];
+  game.phase = 'playing'; game.turnId = host.playerId; game.landlordId = host.playerId; game.deadline = Date.now() + 45_000;
+  game.players.find(player => player.id === host.playerId)!.hand = [...pair, natural('a-left', 6)];
+  game.players.find(player => player.id === friend.playerId)!.hand = [bWild, natural('b-left', 7)];
+  game.players.find(player => player.id === third.playerId)!.hand = [...bomb, natural('c-left', 8)];
+  const initial = await a.act({ type: 'chat', phraseId: 0 });
+  for (const client of clients) await client.receive((item): item is Extract<ServerMessage, { type: 'state' }> => item.type === 'state' && item.state.version >= initial.version);
+  const before = a.state;
+  await assert.rejects(a.act({ type: 'play', cardIds: [aWild.id], wildAs: { [aWild.id]: 15 } }), /牌型|赖子/);
+  assert.deepEqual(a.state, before); assert.equal(game.version, initial.version);
+  const paired = await a.act({ type: 'play', cardIds: pair.map(card => card.id), wildAs: { [aWild.id]: 15 } });
+  assert.equal(paired.currentPlay?.combination.type, 'pair'); assert.equal(paired.currentPlay?.combination.rank, 15);
+  for (const client of clients) {
+    const broadcast = await client.receive((item): item is Extract<ServerMessage, { type: 'state' }> => item.type === 'state' && item.state.version >= paired.version);
+    assert.deepEqual(broadcast.state.currentPlay, paired.currentPlay);
+  }
+  const beforeFollow = b.state;
+  await assert.rejects(b.act({ type: 'play', cardIds: [bWild.id] }), /牌型|赖子/);
+  assert.deepEqual(b.state, beforeFollow); assert.equal(game.turnId, friend.playerId);
+  const passed = await b.act({ type: 'pass' });
+  await c.receive((item): item is Extract<ServerMessage, { type: 'state' }> => item.type === 'state' && item.state.version >= passed.version);
+  const bombed = await c.act({ type: 'play', cardIds: bomb.map(card => card.id), wildAs: { [cWild.id]: 15 } });
+  assert.equal(bombed.currentPlay?.combination.type, 'bomb'); assert.equal(bombed.currentPlay?.combination.bombKind, 'soft'); assert.equal(bombed.currentPlay?.combination.rank, 15);
+  for (const client of clients) {
+    const broadcast = await client.receive((item): item is Extract<ServerMessage, { type: 'state' }> => item.type === 'state' && item.state.version >= bombed.version);
+    assert.deepEqual(broadcast.state.currentPlay, bombed.currentPlay); assert.equal(broadcast.state.multiplier, 2);
+  }
+  for (const direction of [1, -1] as const) {
+    game.turnId = host.playerId; game.currentPlay = null; game.passCount = 0; game.direction = direction; game.skillUsed = 1;
+    game.players.find(player => player.id === host.playerId)!.hand = [aWild];
+    const hands = game.players.map(player => structuredClone(player.hand));
+    const skills = game.players.map(player => structuredClone(player.skills));
+    const trick = game.trick;
+    const synced = await (direction === 1 ? b : c).act({ type: 'chat', phraseId: 1 });
+    await a.receive((item): item is Extract<ServerMessage, { type: 'state' }> => item.type === 'state' && item.state.version >= synced.version);
+    const handed = await a.act({ type: 'pass' });
+    assert.equal(handed.turnId, direction === 1 ? friend.playerId : third.playerId);
+    assert.equal(handed.currentPlay, null); assert.equal(handed.passCount, 0); assert.equal(handed.skillUsed, 0);
+    assert.equal(handed.phase, 'playing'); assert.equal(handed.winnerId, null); assert.equal(handed.trick, trick);
+    assert.deepEqual(game.players.map(player => player.hand), hands); assert.deepEqual(game.players.map(player => player.skills), skills);
+    for (const client of clients) {
+      const broadcast = await client.receive((item): item is Extract<ServerMessage, { type: 'state' }> => item.type === 'state' && item.state.version >= handed.version);
+      assert.equal(broadcast.state.turnId, handed.turnId); assert.equal(broadcast.state.currentPlay, null);
+      assert.ok(broadcast.state.capabilities?.includes('wild-two-no-single'));
+    }
+  }
 });

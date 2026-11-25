@@ -122,7 +122,7 @@ export async function createGameServer(options: { port?: number; host?: string; 
     }
     if (pathname === '/health') {
       response.writeHead(200, { 'Content-Type': MIME['.json'], 'Cache-Control': 'no-store' });
-      response.end(request.method === 'HEAD' ? undefined : JSON.stringify({ ok: true, service: 'glass-landlord', version: packageInfo.version, protocol: 'turn-skills-v2', capabilities: ['quick-chat', 'soft-bomb', 'turn-skill-limit'], rooms: rooms.size }));
+      response.end(request.method === 'HEAD' ? undefined : JSON.stringify({ ok: true, service: 'glass-landlord', version: packageInfo.version, protocol: 'turn-skills-v2', capabilities: ['quick-chat', 'soft-bomb', 'turn-skill-limit', 'wild-two-no-single'], rooms: rooms.size }));
       return;
     }
     if (pathname.includes('\0') || pathname.includes('\\')) { response.writeHead(400).end(); return; }

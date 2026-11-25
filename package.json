@@ -1,6 +1,6 @@
 {
   "name": "glass-landlord",
-  "version": "0.2.5",
+  "version": "0.2.6",
   "private": true,
   "description": "玻璃斗地主 · 透明桌面与朋友技能局",
   "type": "module",
@@ -12,7 +12,7 @@
     "start": "node build/server.cjs",
     "test": "node --experimental-strip-types --test tests/*.test.ts",
     "desktop": "electron .",
-    "pack": "pnpm run build && electron-builder --win portable --x64",
+    "pack": "pnpm run build && node scripts/build-hotkey-helper.mjs && electron-builder --win portable --x64",
     "test:browser": "node --experimental-strip-types scripts/playtest.mjs"
   },
   "dependencies": {
@@ -46,6 +46,7 @@
       "package.json",
       "THIRD_PARTY_NOTICES.md"
     ],
+    "asarUnpack": ["build/hotkey-helper.exe"],
     "win": {
       "target": [
         "portable"

@@ -2,6 +2,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('desktop', {
   isDesktop: true,
   info: () => ipcRenderer.invoke('service-info'),
+  setHideShortcut: accelerator => ipcRenderer.invoke('set-hide-shortcut', accelerator),
   pin: value => ipcRenderer.send('window-control', 'pin', !!value),
   passthrough: value => ipcRenderer.send('window-control', 'passthrough', !!value),
   hide: () => ipcRenderer.send('window-control', 'hide'),
@@ -90,3 +91,5 @@ ipcRenderer.on('reset-layout', () => window.dispatchEvent(new Event('glass-reset
 ipcRenderer.on('display-layout', (_event, layout) => { desktopBounds = layout.bounds; if (nativeFrame) applyNativeFrame({ ...nativeFrame, revision: frameRevision }); window.dispatchEvent(new CustomEvent('glass-display-layout', { detail: layout })); });
 ipcRenderer.on('native-frame', (_event, value) => applyNativeFrame(value));
 ipcRenderer.on('window-state', (_event, value) => window.dispatchEvent(new CustomEvent('glass-window-state', { detail: value })));
+
+ipcRenderer.on('shortcut-state', (_event, value) => window.dispatchEvent(new CustomEvent('glass-shortcut-state', { detail: value })));

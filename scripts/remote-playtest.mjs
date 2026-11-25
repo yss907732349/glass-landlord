@@ -72,7 +72,8 @@ try {
   const deployment = await health.json();
   assert.equal(deployment.ok, true);
   assert.equal(deployment.protocol, 'turn-skills-v2', 'Public deployment has not upgraded to normal-turn skills yet');
-  report.deployment = { version: deployment.version, protocol: deployment.protocol };
+  assert.ok(['quick-chat', 'soft-bomb', 'turn-skill-limit', 'wild-two-no-single'].every(capability => deployment.capabilities?.includes(capability)), 'Public deployment has not upgraded to the latest wildcard rules yet');
+  report.deployment = { version: deployment.version, protocol: deployment.protocol, capabilities: deployment.capabilities };
   passed('public HTTPS health check identifies the new normal-turn skill protocol');
 
   const host = new Client('http://127.0.0.1:4318'); await host.opened();

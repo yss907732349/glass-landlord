@@ -41,9 +41,9 @@ export class RoomConnection {
         this.session = { code: message.code, token: message.token, playerId: message.playerId, endpoint };
         sessionStore().setItem('glass-room', JSON.stringify(this.session)); this.callbacks.joined(this.session); this.callbacks.status('已连接', false);
       } else if (message.type === 'state') {
-        if (!Array.isArray(message.state.events) || !['soft-bomb', 'turn-skill-limit'].every(capability => message.state.capabilities?.includes(capability))) {
+        if (!Array.isArray(message.state.events) || !['soft-bomb', 'turn-skill-limit', 'wild-two-no-single'].every(capability => message.state.capabilities?.includes(capability))) {
           this.leave();
-          this.callbacks.status('房间服务尚未更新赖子炸弹和每回合一张技能的新规则，请更新后再联机。离线游玩可在设置中切换本机服务。', false);
+          this.callbacks.status('房间服务尚未更新：赖子可当2、不能单出，并且每回合限一张技能。请更新服务后再联机；离线游玩可在设置中切换本机服务。', false);
           return;
         }
         this.callbacks.state(message.state);

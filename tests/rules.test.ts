@@ -73,12 +73,14 @@ test('comparison requires the same body length, while bombs and rockets override
   assert.equal(beats(shape([16, 17]), shape([16, 17])), false);
 });
 
-test('wildcard declarations support 3 to A, single 3, soft bombs and never a rocket', () => {
+test('wildcard declarations support 3 through 2 in combinations but never a single or a rocket', () => {
   const w = wild();
-  assert.equal(classify([w])?.rank, 3);
+  assert.equal(classify([w]), null);
+  assert.equal(classify([w], { [w.id]: 3 }), null);
+  assert.equal(classify([w], { [w.id]: 15 }), null);
   assert.equal(classify([w], { [w.id]: 4 }), null);
   assert.equal(classify([...cards([14]), w], { [w.id]: 14 })?.type, 'pair');
-  assert.equal(classify([...cards([15]), w], { [w.id]: 15 }), null);
+  assert.equal(classify([...cards([15]), w], { [w.id]: 15 })?.type, 'pair');
   assert.equal(classify([...cards([16]), w], { [w.id]: 17 }), null);
   assert.equal(classify([...cards([7, 7, 7]), w], { [w.id]: 7 })?.bombKind, 'soft');
   assert.equal(classify([...cards([3, 4, 6, 7]), w], { [w.id]: 5 })?.type, 'straight');
@@ -88,7 +90,7 @@ test('wildcard declarations support 3 to A, single 3, soft bombs and never a roc
 });
 
 test('three matching cards plus a wildcard form a soft bomb, including multiple wildcard transfers', () => {
-  for (let rank = 3; rank <= 14; rank++) {
+  for (let rank = 3; rank <= 15; rank++) {
     for (let count = 1; count <= 3; count++) {
       const wilds = Array.from({ length: count }, wild);
       const selected = [...cards(Array(4 - count).fill(rank)), ...wilds];
@@ -102,7 +104,7 @@ test('three matching cards plus a wildcard form a soft bomb, including multiple 
   const wilds = Array.from({ length: 4 }, wild);
   assert.equal(classify(wilds, Object.fromEntries(wilds.map(card => [card.id, 7]))), null);
   const w = wild();
-  assert.equal(classify([...cards([15, 15, 15]), w], { [w.id]: 15 }), null);
+  assert.equal(classify([...cards([15, 15, 15]), w], { [w.id]: 15 })?.bombKind, 'soft');
   assert.equal(classify([...cards([7, 7, 7, 7]), w], { [w.id]: 7 }), null);
 });
 
@@ -131,6 +133,36 @@ test('automatic choices and hints find soft bombs and lower hard bombs that beat
   const hardHint = findHint(hardHand, previous); assert.ok(hardHint);
   assert.equal(classifyAgainst(hardHand.filter(card => hardHint.cardIds.includes(card.id)), previous, hardHint.wildAs)?.rank, 3);
   assert.equal(findHint(hand, shape([3, 3, 3, 3])), null);
+});
+
+test('wildcards can form twos in ordinary groups and soft bombs while sequence bodies still stop at ace', () => {
+  const w = wild();
+  assert.equal(classify([...cards([15, 15]), w], { [w.id]: 15 })?.type, 'triple');
+  assert.equal(classify([...cards([15, 15, 7]), w], { [w.id]: 15 })?.type, 'triple_single');
+  assert.equal(classify([...cards([7, 7, 7, 15]), w], { [w.id]: 15 })?.type, 'triple_pair');
+  assert.equal(classify([...cards([11, 12, 13, 14]), w], { [w.id]: 15 }), null);
+  assert.equal(classify([...cards([13, 13, 14, 14, 15]), w], { [w.id]: 15 }), null);
+  assert.equal(classify([...cards([14, 14, 14, 15, 15]), w], { [w.id]: 15 }), null);
+  const pairCards = [...cards([15]), w];
+  const pair = resolveWildPlays(pairCards, shape([14, 14]));
+  assert.equal(pair.length, 1); assert.equal(pair[0].combination.type, 'pair'); assert.equal(pair[0].wildAs[w.id], 15);
+  const pairHint = findHint(pairCards, shape([14, 14])); assert.ok(pairHint);
+  assert.equal(pairHint.wildAs?.[w.id], 15);
+  const bombHand = [...cards([15, 15, 15, 4]), w];
+  const previousWild = wild();
+  const previous = classify([...cards([14, 14, 14]), previousWild], { [previousWild.id]: 14 })!;
+  const bombHint = findHint(bombHand, previous); assert.ok(bombHint);
+  assert.equal(bombHint.wildAs?.[w.id], 15);
+  assert.equal(classifyAgainst(bombHand.filter(card => bombHint.cardIds.includes(card.id)), previous, bombHint.wildAs)?.rank, 15);
+});
+
+test('hints never offer a lone wildcard, including when it is the only card or a following single', () => {
+  const w = wild();
+  assert.equal(findHint([w], null), null); assert.equal(findHint([w], shape([3])), null);
+  const hand = [...cards([15]), w];
+  const hint = findHint(hand, shape([14])); assert.ok(hint);
+  assert.equal(hint.cardIds.length, 1); assert.equal(hint.cardIds[0], hand[0].id);
+  assert.equal(hint.wildAs, undefined);
 });
 
 test('multiple wildcards work in ordinary combinations including four-with-wings', () => {
@@ -209,13 +241,13 @@ test('deterministic randomized hands never produce illegal or non-owned hints', 
   }
 });
 
-test('automatic wildcard resolution returns a unique forced replacement and single wildcard remains 3', () => {
+test('automatic wildcard resolution returns a unique forced replacement and rejects single wildcards', () => {
   const w = wild();
   const unique = resolveWildPlays([...cards([3, 4, 6, 7]), w], null);
   assert.equal(unique.length, 1); assert.equal(unique[0].wildAs[w.id], 5);
   assert.equal(unique[0].combination.type, 'straight'); assert.deepEqual(unique[0].effectiveRanks, [3, 4, 5, 6, 7]);
   const single = resolveWildPlays([w], null);
-  assert.equal(single.length, 1); assert.equal(single[0].wildAs[w.id], 3); assert.equal(single[0].combination.rank, 3);
+  assert.deepEqual(single, []);
   assert.deepEqual(resolveWildPlays([w], shape([3])), []);
 });
 
@@ -234,10 +266,10 @@ test('multiple wildcard identity permutations collapse but genuinely different w
   const w1 = wild(); const w2 = wild();
   const selection = [...cards([3, 3]), w2, w1];
   const choices = resolveWildPlays(selection, null);
-  assert.equal(choices.length, 12);
+  assert.equal(choices.length, 13);
   assert.equal(choices.filter(option => option.combination.bombKind === 'soft').length, 1);
   assert.ok(choices.every(option => ['triple_single', 'bomb'].includes(option.combination.type) && option.combination.rank === 3));
-  assert.deepEqual(choices.filter(option => option.combination.type === 'triple_single').map(option => option.effectiveRanks.at(-1)), Array.from({ length: 11 }, (_, i) => i + 4));
+  assert.deepEqual(choices.filter(option => option.combination.type === 'triple_single').map(option => option.effectiveRanks.at(-1)), Array.from({ length: 12 }, (_, i) => i + 4));
   const keys = choices.map(option => `${option.combination.type}:${option.effectiveRanks.join(',')}`);
   assert.equal(new Set(keys).size, keys.length);
   const wildcardIds = [w1.id, w2.id].sort((a, b) => a.localeCompare(b));
@@ -269,7 +301,9 @@ test('automatic choices match the exact server interpretation when one declarati
 });
 
 test('automatic resolution preserves forbidden substitutions, bomb restrictions and invalid-input rejection', () => {
-  assert.deepEqual(resolveWildPlays([...cards([15]), wild()], null), []);
+  const twoWild = wild();
+  const pairTwo = resolveWildPlays([...cards([15]), twoWild], null);
+  assert.equal(pairTwo.length, 1); assert.equal(pairTwo[0].combination.rank, 15); assert.equal(pairTwo[0].wildAs[twoWild.id], 15);
   assert.deepEqual(resolveWildPlays([...cards([16]), wild()], null), []);
   assert.deepEqual(resolveWildPlays([...cards([7, 7, 7]), wild()], shape([6, 6, 6, 6])), []);
   assert.deepEqual(resolveWildPlays([...cards([11, 12, 13, 14]), wild()], null).map(option => option.effectiveRanks), [[10, 11, 12, 13, 14]]);
@@ -284,8 +318,8 @@ test('automatic resolution preserves forbidden substitutions, bomb restrictions 
 test('three wildcard resolutions stay bounded and preserve every legal distinct rank multiset', () => {
   const selection = [wild(), wild(), wild()];
   const options = resolveWildPlays(selection, null);
-  assert.equal(options.length, 12); assert.ok(options.every(option => option.combination.type === 'triple'));
-  assert.deepEqual(options.map(option => option.combination.rank), Array.from({ length: 12 }, (_, i) => i + 3));
+  assert.equal(options.length, 13); assert.ok(options.every(option => option.combination.type === 'triple'));
+  assert.deepEqual(options.map(option => option.combination.rank), Array.from({ length: 13 }, (_, i) => i + 3));
   const larger = [...cards([3, 3, 4, 4, 5, 6, 7]), ...selection];
   const start = performance.now();
   for (let i = 0; i < 100; i++) {

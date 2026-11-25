@@ -1,5 +1,5 @@
 import { makeDeck, sortCards } from './cards.ts';
-import { classifyAll, classifyAgainst } from './rules.ts';
+import { classifyAll, classifyAgainst, findHint } from './rules.ts';
 import { getSkill, SKILLS } from './skills.ts';
 import { QUICK_CHATS } from './chat.ts';
 import type { Card, GameAction, GameEvent, GameView, Phase, PlayedCards, SkillCard } from './types.ts';
@@ -307,7 +307,14 @@ export class Game {
       }
       case 'pass':
         if (this.phase !== 'playing' || this.turnId !== id) throw new Error('还没轮到你出牌。');
-        if (!this.currentPlay) throw new Error('你是本轮领出者，必须出牌。');
+        if (!this.currentPlay) {
+          if (player.hand.length !== 1 || !player.hand[0].wild) throw new Error('你是本轮领出者，必须出牌。');
+          this.passCount = 0; this.lastActorId = id;
+          this.log(`${player.name} 只剩一张赖子，交由下家领出。`);
+          this.event({ type: 'pass', actorId: id });
+          this.beginTurn(this.next(id));
+          break;
+        }
         this.passCount++; this.lastActorId = id; this.log(`${player.name} 不出。`);
         this.event({ type: 'pass', actorId: id });
         if (this.passCount >= 2) this.beginSkills(this.currentPlay.playerId);
@@ -344,8 +351,13 @@ export class Game {
       if (this.currentPlay) this.act(this.turnId, { type: 'pass' });
       else {
         const player = this.getPlayer(this.turnId);
-        const card = sortCards(player.hand)[0];
-        this.act(player.id, { type: 'play', cardIds: [card.id], ...(card.wild ? { wildAs: { [card.id]: 3 } } : {}) });
+        const card = sortCards(player.hand).find(card => !card.wild);
+        if (card) this.act(player.id, { type: 'play', cardIds: [card.id] });
+        else {
+          const hint = findHint(player.hand, null);
+          if (hint) this.act(player.id, { type: 'play', ...hint });
+          else this.act(player.id, { type: 'pass' });
+        }
       }
     } else if (this.phase === 'skill_discard') {
       const ids = this.players.filter(p => this.excess(p) > 0).map(p => p.id);
@@ -365,7 +377,7 @@ export class Game {
       lastActorId: this.lastActorId, passCount: this.passCount, trick: this.trick, multiplier: this.multiplier, bidMax: this.bidMax,
       skillActorId: null, skillOrder: [], skillUsed: this.skillUsed, skillBudget: 1,
       mustDiscard: this.excess(self), logs: this.logs, events: this.events, privatePeek: self.peek,
-      winner: this.winner, winnerId: this.winnerId, deadline: this.deadline, paused: this.paused, version: this.version, capabilities: ['quick-chat', 'soft-bomb', 'turn-skill-limit'],
+      winner: this.winner, winnerId: this.winnerId, deadline: this.deadline, paused: this.paused, version: this.version, capabilities: ['quick-chat', 'soft-bomb', 'turn-skill-limit', 'wild-two-no-single'],
     });
   }
 }

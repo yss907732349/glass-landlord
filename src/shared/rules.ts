@@ -19,7 +19,7 @@ function effectiveRanks(cards: Card[], wildAs: Record<string, number> = {}): num
   for (const card of cards) {
     if (card.wild) {
       const rank = wildAs[card.id] ?? 3;
-      if (!Number.isInteger(rank) || rank < 3 || rank > 14 || (cards.length === 1 && rank !== 3)) return null;
+      if (!Number.isInteger(rank) || rank < 3 || rank > 15 || cards.length === 1) return null;
       ranks.push(rank);
     } else {
       if (!Number.isInteger(card.rank) || card.rank < 3 || card.rank > 17) return null;
@@ -126,8 +126,8 @@ export interface WildPlayOption {
 /**
  * Resolve a selected physical hand before asking the player to choose a shape.
  * Wildcard identity does not affect strength, so assignments are nondecreasing
- * over sorted wildcard IDs. Three wildcards require only C(14, 3) = 364
- * assignments instead of all 12^3 identity permutations.
+ * over sorted wildcard IDs. Three wildcards require only C(15, 3) = 455
+ * assignments instead of all 13^3 identity permutations.
  */
 export function resolveWildPlays(cards: Card[], previous: Combination | null): WildPlayOption[] {
   if (!cards.length || new Set(cards.map(card => card.id)).size !== cards.length) return [];
@@ -151,15 +151,13 @@ export function resolveWildPlays(cards: Card[], previous: Combination | null): W
   };
   const assign = (index: number, minimum: number): void => {
     if (index === wildcards.length) { collect(); return; }
-    for (let rank = minimum; rank <= 14; rank++) {
+    for (let rank = minimum; rank <= 15; rank++) {
       declarations[wildcards[index].id] = rank;
       assign(index + 1, rank);
     }
   };
-  if (cards.length === 1 && wildcards.length === 1) {
-    declarations[wildcards[0].id] = 3;
-    collect();
-  } else assign(0, 3);
+  if (cards.length === 1 && wildcards.length === 1) return [];
+  assign(0, 3);
   return options;
 }
 
@@ -190,7 +188,7 @@ export function findHint(hand: Card[], previous: Combination | null): { cardIds:
     const cards = (natural.get(rank) ?? []).filter(c => !used.has(c.id)).slice(0, count);
     const missing = count - cards.length;
     if (missing) {
-      if (!allowWild || rank < 3 || rank > 14) return null;
+      if (!allowWild || rank < 3 || rank > 15) return null;
       const available = wild.filter(c => !used.has(c.id));
       if (available.length < missing) return null;
       cards.push(...available.slice(0, missing));

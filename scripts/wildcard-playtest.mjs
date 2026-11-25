@@ -145,6 +145,55 @@ try {
   assert.equal(await page.locator('.wild-options').count(), 0);
   checks.push('an impossible wildcard group sends no play request and explains the invalid selection');
 
+  const pairTwo = await readyFixture('pair-two', [15, 'W']);
+  before = count(); await clickPlay(); action = await acceptedSince(before);
+  assert.equal(action.wildAs[pairTwo.find(card => card.wild).id], 15);
+  assert.equal(fixture.currentPlay.combination.type, 'pair');
+  assert.equal(fixture.currentPlay.combination.rank, 15);
+  assert.equal(await page.locator('.wild-options').count(), 0);
+  checks.push('two plus wildcard automatically forms a pair of twos accepted by the real game');
+
+  const tripleTwo = await readyFixture('triple-two', [15, 15, 'W']);
+  before = count(); await clickPlay(); action = await acceptedSince(before);
+  assert.equal(action.wildAs[tripleTwo.find(card => card.wild).id], 15);
+  assert.equal(fixture.currentPlay.combination.type, 'triple');
+  checks.push('two twos plus wildcard automatically form a triple of twos');
+
+  const softTwo = await readyFixture('soft-two', [15, 15, 15, 'W'], [15]);
+  before = count(); await clickPlay(); action = await acceptedSince(before);
+  assert.equal(action.wildAs[softTwo.find(card => card.wild).id], 15);
+  assert.equal(fixture.currentPlay.combination.bombKind, 'soft');
+  assert.equal(fixture.currentPlay.combination.rank, 15);
+  await screenshot('wildcard-soft-two.png');
+  checks.push('three twos plus wildcard automatically form a soft two bomb when following a single two');
+
+  await readyFixture('single-wild-forbidden', ['W']);
+  before = count(); await clickPlay();
+  await page.getByRole('status').filter({ hasText: /不能单出|无法组成能出的牌型/ }).waitFor();
+  assert.equal(count(), before);
+  assert.equal(await page.locator('.wild-options').count(), 0);
+  checks.push('a selected lone wildcard cannot be played and sends no server action');
+
+  await readyFixture('only-wild-can-pass', ['W']);
+  fixture.players.find(player => player.id === 'self').hand = fixture.players.find(player => player.id === 'self').hand.filter(card => card.wild);
+  fixture.version++; publish();
+  await page.waitForFunction(() => window.__wildView.hand.length === 1);
+  await page.locator('.empty-center').filter({ hasText: '只剩赖子，可以不出。' }).waitFor();
+  assert.equal(await page.getByRole('button', { name: '不出', exact: true }).isEnabled(), true);
+  await page.getByRole('button', { name: '提示', exact: true }).click();
+  await page.getByRole('status').filter({ hasText: '可以不出，交给下家领出' }).waitFor();
+  await page.getByRole('button', { name: '不出', exact: true }).click();
+  await page.waitForFunction(() => window.__wildView.turnId !== 'self');
+  assert.equal(fixture.phase, 'playing');
+  assert.equal(fixture.currentPlay, null);
+  checks.push('with only a wildcard and an empty table, the UI explains the rule and can pass the lead to the next player');
+
+  const highStraight = await readyFixture('straight-two-forbidden', [11, 12, 13, 14, 'W']);
+  before = count(); await clickPlay(); action = await acceptedSince(before);
+  assert.equal(action.wildAs[highStraight.find(card => card.wild).id], 10);
+  assert.deepEqual(fixture.currentPlay.cards.map(card => card.wild ? action.wildAs[card.id] : card.rank).sort((a, b) => a - b), [10, 11, 12, 13, 14]);
+  checks.push('JQKA plus wildcard remains a ten-to-ace straight and never substitutes two in a sequence');
+
   const multiple = await readyFixture('two-wildcards', [4, 5, 8, 'W', 'W']);
   before = count(); await clickPlay(); action = await acceptedSince(before);
   assert.deepEqual(Object.values(action.wildAs).sort((a, b) => a - b), [6, 7]);

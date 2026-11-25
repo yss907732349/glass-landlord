@@ -3,7 +3,8 @@ const path = require('node:path');
 const fs = require('node:fs');
 const { createGameServer } = require('../build/server.cjs');
 const { getDesktopLayout } = require('./layout.cjs');
-let windowRef, localService, tray, trayMenu, displayLayout, displayTimer, cropTimer, diagnosticTimer;
+const { HideShortcutController } = require('./shortcuts.cjs');
+let windowRef, localService, tray, trayMenu, displayLayout, displayTimer, cropTimer, diagnosticTimer, hideShortcuts;
 let nativeFrame, frameRevision = 1, tableRegion, lastKnownTableRegion, lastTableKey = '', pendingLayout = false;
 let interactionLocked = false, layoutGesture = false, layoutSuspended = false, userPinned = true;
 const transitions = [];
@@ -91,7 +92,7 @@ app.whenReady().then(async () => {
     if (event.sender !== windowRef?.webContents) return { addresses: [] };
     const addresses = Object.values(require('node:os').networkInterfaces()).flat().filter(item => item && item.family === 'IPv4' && !item.internal).map(item => `http://${item.address}:${localService.port}`);
     const regions = tableRegion ? [{ x: tableRegion.x - nativeFrame.x - 24, y: tableRegion.y - nativeFrame.y - 24, width: tableRegion.width + 48, height: tableRegion.height + 48 }] : [];
-    return { addresses, layout: displayLayout, frame: nativeFrame, frameRevision, interaction: { mode: 'stable-window', ignored: false, locked: interactionLocked, layoutGesture, revision: frameRevision, regionsRevision: tableRegion ? frameRevision : 0, regions }, window: { visible: windowRef.isVisible(), minimized: windowRef.isMinimized(), pinned: windowRef.isAlwaysOnTop(), focused: windowRef.isFocused(), zoomFactor: windowRef.webContents.getZoomFactor() }, diagnostics: transitions };
+    return { addresses, layout: displayLayout, frame: nativeFrame, frameRevision, interaction: { mode: 'stable-window', ignored: false, locked: interactionLocked, layoutGesture, revision: frameRevision, regionsRevision: tableRegion ? frameRevision : 0, regions }, window: { visible: windowRef.isVisible(), minimized: windowRef.isMinimized(), pinned: windowRef.isAlwaysOnTop(), focused: windowRef.isFocused(), zoomFactor: windowRef.webContents.getZoomFactor() }, diagnostics: transitions, hideShortcut: hideShortcuts?.snapshot() };
   });
   windowRef.webContents.on('will-navigate', (event, url) => { if (!url.startsWith(`${appUrl}/`)) event.preventDefault(); });
   ipcMain.on('window-control', (event, command, value) => {
@@ -146,7 +147,22 @@ app.whenReady().then(async () => {
     windowRef.webContents.send('display-layout', { ...displayLayout, previousBounds, reset: true });
   }
   setNativeFrame(initialFrame(displayLayout), 'startup', true);
-  globalShortcut.register('CommandOrControl+Shift+H', toggle);
+  hideShortcuts = new HideShortcutController({
+    globalShortcut, userData: app.getPath('userData'),
+    helperPath: app.isPackaged ? path.join(process.resourcesPath, 'app.asar.unpacked/build/hotkey-helper.exe') : path.join(__dirname, '../build/hotkey-helper.exe'),
+    sourcePath: path.join(__dirname, 'hotkey-helper.cs'), packaged: app.isPackaged,
+    onTrigger: toggle,
+    onChange: state => {
+      record('shortcut', { accelerator: state.accelerator, mode: state.mode, ok: state.ok });
+      tray?.setToolTip(`玻璃斗地主 · ${state.accelerator} 显示 / 隐藏${state.ok ? '' : '（快捷键未启用）'}`);
+      if (!windowRef?.webContents.isDestroyed()) windowRef?.webContents.send('shortcut-state', state);
+    },
+  });
+  ipcMain.handle('set-hide-shortcut', async (event, accelerator) => {
+    if (event.sender !== windowRef?.webContents) return { ok: false, accelerator: '', mode: 'unavailable', message: '无权修改快捷键。' };
+    return hideShortcuts.set(accelerator);
+  });
+  await hideShortcuts.start();
   const updateDisplays = (reset = false) => {
     const previousBounds = displayLayout.bounds;
     displayLayout = getDesktopLayout(screen); abortInteraction(); lastTableKey = '';
@@ -155,7 +171,7 @@ app.whenReady().then(async () => {
   };
   globalShortcut.register('CommandOrControl+Shift+0', () => { record('command', { command: 'reset' }); updateDisplays(true); windowRef.webContents.send('reset-layout'); if (windowRef.isMinimized()) windowRef.restore(); windowRef.show(); });
   const trayIcon = nativeImage.createFromPath(path.join(__dirname, 'icon.png')).resize({ width: 20, height: 20 });
-  tray = new Tray(trayIcon); tray.setToolTip('玻璃斗地主 · Ctrl+Shift+H 显示 / 隐藏');
+  tray = new Tray(trayIcon); tray.setToolTip(`玻璃斗地主 · ${hideShortcuts.snapshot().accelerator} 显示 / 隐藏${hideShortcuts.snapshot().ok ? '' : '（快捷键未启用）'}`);
   trayMenu = Menu.buildFromTemplate([{ label: '显示 / 隐藏牌局', click: toggle }, { id: 'pin', label: '置顶显示', type: 'checkbox', checked: userPinned, click: item => { if (userPinned !== item.checked) { record('command', { command: 'pin', value: item.checked }); userPinned = item.checked; windowRef.setAlwaysOnTop(userPinned, 'floating'); } } }, { type: 'separator' }, { label: '退出', click: () => app.quit() }]);
   tray.setContextMenu(trayMenu);
   tray.on('double-click', toggle);
@@ -170,6 +186,6 @@ app.whenReady().then(async () => {
 }).catch(error => { console.error('桌面启动失败', error); app.quit(); });
 app.on('window-all-closed', () => app.quit());
 app.on('will-quit', () => {
-  clearTimeout(displayTimer); clearTimeout(cropTimer); clearTimeout(diagnosticTimer); globalShortcut.unregisterAll(); localService?.close();
+  clearTimeout(displayTimer); clearTimeout(cropTimer); clearTimeout(diagnosticTimer); hideShortcuts?.close(); globalShortcut.unregisterAll(); localService?.close();
   try { fs.writeFileSync(path.join(app.getPath('userData'), 'window-diagnostics.json'), JSON.stringify(diagnostics(), null, 2)); } catch {}
 });

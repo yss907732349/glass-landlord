@@ -64,7 +64,7 @@ try {
       upstream.onMessage(raw => {
         if (legacyCapability && typeof raw === 'string') {
           const message = JSON.parse(raw);
-          if (message.type === 'state') { message.state.capabilities = []; route.send(JSON.stringify(message)); return; }
+          if (message.type === 'state') { message.state.capabilities = message.state.capabilities.filter(capability => capability !== 'wild-two-no-single'); route.send(JSON.stringify(message)); return; }
         }
         route.send(raw);
       });
@@ -157,11 +157,12 @@ try {
   checks.push('chat bubbles automatically disappear after their 4.5-second lifetime');
 
   legacyCapability = true;
-  await sendPhrase(0, 0);
-  await pages[2].getByRole('button', { name: '快捷聊天', exact: true }).waitFor();
-  assert.equal(await pages[2].getByRole('button', { name: '快捷聊天', exact: true }).isDisabled(), true);
-  assert.equal(await pages[0].getByRole('button', { name: '快捷聊天', exact: true }).isEnabled(), true);
-  checks.push('a view without quick-chat capability disables the chat button while compatible clients stay enabled');
+  await pages[0].evaluate(() => window.__chatSocket.send(JSON.stringify({ type: 'action', action: { type: 'chat', phraseId: 0 } })));
+  await pages[2].getByRole('heading', { name: '朋友，入座。', exact: true }).waitFor();
+  await pages[2].getByRole('status').filter({ hasText: '房间服务尚未更新' }).waitFor();
+  assert.equal(await pages[2].getByRole('button', { name: '快捷聊天', exact: true }).count(), 0);
+  await pages[0].getByRole('heading', { name: '朋友，入座。', exact: true }).waitFor();
+  checks.push('a server missing only the latest wildcard capability is rejected with an upgrade explanation; leaving the active room also closes it for the other seats');
   assert.deepEqual(errors, []);
   console.log(JSON.stringify({ result: 'passed', checks, errors }, null, 2));
 } catch (error) {

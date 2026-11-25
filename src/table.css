@@ -244,3 +244,14 @@ input[type=checkbox] { accent-color: #8d9fb4; }
 .peek-inline .card-corner b { font-size: 17px; }
 .peek-inline .card-corner i { font-size: 12px; }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
+
+.shortcut-settings { min-width: 0; padding: 12px; margin: 16px 0; border: 1px solid #3b4655; border-radius: 6px; }
+.shortcut-settings legend { padding: 0 6px; color: #c0ccda; font-size: 12px; }
+.shortcut-inputs { display: flex; align-items: flex-end; gap: 8px; }
+.shortcut-inputs label:first-child { flex: 1; }
+.shortcut-inputs label:last-child { width: 86px; }
+.shortcut-inputs select { margin-top: 6px; height: 36px; }
+.shortcut-inputs > span { align-self: flex-end; line-height: 36px; color: #93a4b9; }
+.shortcut-actions { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
+.shortcut-help, .shortcut-status { font-size: 11px; line-height: 1.75; margin-top: 8px; color: #99aabd; }
+.shortcut-status { color: #c0cddb; overflow-wrap: anywhere; }

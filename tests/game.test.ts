@@ -53,7 +53,7 @@ test('quick chat is allowed in every room phase and off-turn without changing ga
     assert.equal(version, _version + 1); assert.equal(events.at(-1)?.type, 'chat');
     assert.equal(events.at(-1)?.actorId, 'b'); assert.equal(game.turnId, 'a');
     assert.deepEqual(game.view('a').events, game.view('c').events);
-    assert.deepEqual(game.view('a').capabilities, ['quick-chat', 'soft-bomb', 'turn-skill-limit']);
+    assert.deepEqual(game.view('a').capabilities, ['quick-chat', 'soft-bomb', 'turn-skill-limit', 'wild-two-no-single']);
   }
 });
 
@@ -119,6 +119,24 @@ test('three natural cards plus a wildcard play as a soft bomb, broadcast substit
   }
   assert.equal(game.events.at(-1)?.type, 'play');
   assert.equal(game.events.at(-1)?.count, 4);
+});
+
+test('twos made with wildcards are accepted and rejected single wildcards preserve cards, skill allowance and turn', () => {
+  for (const rank of [undefined, 3, 15]) {
+    const game = playing(); const actor = game.players[0]; const w = card(3, true);
+    actor.hand = [w, card(15), card(6)]; game.skillUsed = 1;
+    const before = game.view('a');
+    assert.throws(() => game.act('a', { type: 'play', cardIds: [w.id], ...(rank === undefined ? {} : { wildAs: { [w.id]: rank } }) }), /牌型|赖子/);
+    assert.deepEqual(game.view('a'), before);
+    game.act('a', { type: 'play', cardIds: actor.hand.slice(0, 2).map(item => item.id), wildAs: { [w.id]: 15 } });
+    assert.equal(game.currentPlay?.combination.type, 'pair'); assert.equal(game.currentPlay?.combination.rank, 15);
+    assert.equal(game.turnId, 'b'); assert.equal(actor.hand.length, 1);
+  }
+  const game = playing(); const actor = game.players[0]; const w = card(3, true);
+  actor.hand = [card(15), card(15), card(15), w, card(4)];
+  game.act('a', { type: 'play', cardIds: actor.hand.slice(0, 4).map(item => item.id), wildAs: { [w.id]: 15 } });
+  assert.equal(game.currentPlay?.combination.bombKind, 'soft'); assert.equal(game.currentPlay?.combination.rank, 15);
+  assert.equal(game.multiplier, 2);
 });
 
 test('a lower hard bomb beats a soft bomb while a higher soft bomb cannot beat it or consume cards', () => {
@@ -420,7 +438,7 @@ test('seeded long games with chaotic, cooperative and stockpiling strategies ter
         }
         if (!used) {
           const hint = findHint(actor.hand, game.currentPlay?.combination ?? null);
-          const canPass = game.currentPlay !== null;
+          const canPass = game.currentPlay !== null || (actor.hand.length === 1 && !!actor.hand[0].wild);
           const passForTeammate = seed % 3 === 1 && game.currentPlay?.playerId !== game.landlordId && actor.id !== game.landlordId;
           if (canPass && (!hint || passForTeammate || random() < 0.15)) game.act(actor.id, { type: 'pass' });
           else {
@@ -484,4 +502,59 @@ test('timeout advancement clears the used allowance and restart begins with a fr
   for (const p of game.players) game.act(p.id, { type: 'ready', ready: true });
   game.act('a', { type: 'start' }); game.act(game.turnId!, { type: 'bid', value: 3 });
   assert.equal(game.view(game.turnId!).skillUsed, 0); assert.equal(game.view(game.turnId!).skillBudget, 1);
+});
+
+test('a lone wildcard can hand off an empty table in either direction without ending the trick or drawing skills', () => {
+  for (const direction of [1, -1] as const) {
+    const game = playing(); game.direction = direction; game.skillUsed = 1;
+    const wild = card(3, true); game.players[0].hand = [wild];
+    game.players[0].skills = [{ id: 'retained', kind: 'wild' }];
+    const hands = game.players.map(player => structuredClone(player.hand));
+    const skills = game.players.map(player => structuredClone(player.skills));
+    const version = game.version, trick = game.trick, multiplier = game.multiplier;
+    game.act('a', { type: 'pass' });
+    assert.equal(game.turnId, direction === 1 ? 'b' : 'c');
+    assert.equal(game.phase, 'playing'); assert.equal(game.currentPlay, null); assert.equal(game.passCount, 0);
+    assert.equal(game.trick, trick); assert.equal(game.multiplier, multiplier); assert.equal(game.winner, null); assert.equal(game.winnerId, null);
+    assert.equal(game.skillUsed, 0); assert.equal(game.lastActorId, 'a'); assert.equal(game.version, version + 1);
+    assert.deepEqual(game.players.map(player => player.hand), hands); assert.deepEqual(game.players.map(player => player.skills), skills);
+    assert.equal(game.events.at(-1)?.type, 'pass'); assert.equal(game.events.at(-1)?.actorId, 'a');
+  }
+});
+
+test('ordinary leaders and leaders with multiple wildcards still must play on an empty table', () => {
+  for (const hand of [[card(3)], [card(3, true), card(4)], [card(3, true), card(3, true)]]) {
+    const game = playing(); game.players[0].hand = hand;
+    const before = game.view('a');
+    assert.throws(() => game.act('a', { type: 'pass' }), /领出者/);
+    assert.deepEqual(game.view('a'), before);
+  }
+});
+
+test('timeout leads with the smallest natural card instead of trying to single a wildcard', () => {
+  const game = playing(); const wild = card(3, true), small = card(4), large = card(9);
+  game.players[0].hand = [wild, large, small];
+  game.tick(game.deadline! + 1);
+  assert.deepEqual(game.currentPlay?.cards, [small]); assert.equal(game.currentPlay?.combination.type, 'single');
+  assert.deepEqual(game.players[0].hand, [wild, large]); assert.equal(game.turnId, 'b');
+});
+
+test('timeout with only wildcards finds a legal combination, and a lone wildcard hands the lead onward', () => {
+  for (const count of [2, 3]) {
+    const game = playing(); game.players[0].hand = Array.from({ length: count }, () => card(3, true));
+    game.tick(game.deadline! + 1);
+    assert.equal(game.currentPlay?.cards.length, count);
+    assert.equal(game.currentPlay?.combination.type, count === 2 ? 'pair' : 'triple');
+    assert.equal(game.phase, 'finished'); assert.equal(game.winnerId, 'a');
+  }
+  for (const direction of [1, -1] as const) {
+    const game = playing(); game.direction = direction;
+    const wild = card(3, true); game.players[0].hand = [wild];
+    game.tick(game.deadline! + 1);
+    assert.equal(game.turnId, direction === 1 ? 'b' : 'c'); assert.equal(game.currentPlay, null); assert.equal(game.phase, 'playing');
+    assert.equal(game.trick, 1); assert.equal(game.winnerId, null); assert.deepEqual(game.players[0].hand, [wild]);
+    game.tick(game.deadline! + 1);
+    const nextPlay = game.view('a').currentPlay;
+    assert.equal(nextPlay?.combination.type, 'single'); assert.equal(nextPlay?.cards[0].wild, undefined);
+  }
 });
